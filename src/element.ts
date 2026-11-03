@@ -25,7 +25,7 @@ button:focus-visible { outline: 2px solid var(--tl-accent, var(--_accent)); outl
   font: 500 12px system-ui, sans-serif; color: #fff; background: rgba(15, 18, 26, .92); opacity: 0; transition: opacity .2s, transform .2s;
   pointer-events: none; white-space: nowrap; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
-.tools { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; }
+.tools { position: absolute; left: 8px; top: 58px; display: flex; flex-direction: column; gap: 4px; }
 .tools button { width: 30px; min-width: 0; padding: 0; display: grid; place-items: center; opacity: .8; }
 .tools button:hover, .tools button[aria-pressed="true"] { opacity: 1; }
 .tools button[aria-pressed="true"] { color: var(--tl-accent-text, #fff); background: var(--tl-accent, var(--_accent)); border-color: transparent; }
@@ -39,7 +39,7 @@ button:focus-visible { outline: 2px solid var(--tl-accent, var(--_accent)); outl
 .selbar .del { height: 24px; font-weight: 600; font-size: 12px; }
 :host([controls="none"]) .controls, :host([controls="none"]) .live, :host([controls="none"]) .tools,
 :host([drawing-tools="false"]) .tools { display: none !important; }
-@media (max-width: 420px) { .tools { top: auto; bottom: 36px; transform: none; flex-direction: row; } }
+@media (max-width: 420px) { .tools { top: auto; bottom: 36px; flex-direction: row; } }
 @media (prefers-reduced-motion: reduce) { .controls, .toast { transition: none; } }
 `;
 
@@ -261,4 +261,8 @@ export class TradeChartElement extends HTMLElement {
 /** Registers <trade-chart> (safe to call more than once). */
 export function defineTradeChart(tag = "trade-chart"): void {
   if (typeof customElements !== "undefined" && !customElements.get(tag)) customElements.define(tag, class extends TradeChartElement {});
+}
+
+declare global {
+  interface HTMLElementTagNameMap { "trade-chart": TradeChartElement }
 }

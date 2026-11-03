@@ -1,0 +1,54 @@
+@*
+  Blazor (Server or WebAssembly, .NET 8+).
+  1. Copy dist/tickline.umd.js and wwwroot/tickline-interop.js into your app's wwwroot.
+  2. Add both scripts to App.razor (or index.html) before blazor.web.js:
+       <script src="tickline.umd.js"></script>
+       <script src="tickline-interop.js"></script>
+  3. Use <PriceChart Candles="@candles" /> and call PushTick(...) from your price feed (SignalR, a hosted service, ...).
+*@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<trade-chart id="@Id" symbol="@Symbol" timeframe="@Timeframe" theme="@Theme"
+             indicators="sma:20, volume" style="display: block; height: 480px"></trade-chart>
+
+@code {
+    [Parameter] public string Symbol { get; set; } = "BTC/USDT";
+    [Parameter] public string Timeframe { get; set; } = "1m";
+    [Parameter] public string Theme { get; set; } = "dark";
+    [Parameter, EditorRequired] public IReadOnlyList<Candle> Candles { get; set; } = [];
+    /// <summary>Called with the oldest candle time (Unix ms) when the user scrolls back. Return older candles.</summary>
+    [Parameter] public Func<long, Task<IReadOnlyList<Candle>>>? LoadOlder { get; set; }
+
+    private readonly string Id = $"chart-{Guid.NewGuid():N}";
+    private DotNetObjectReference<PriceChart>? self;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        self = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("tickline.init", Id, self);
+        await JS.InvokeVoidAsync("tickline.setData", Id, Candles);
+    }
+
+    /// <summary>Send one live trade or quote to the chart.</summary>
+    public ValueTask PushTick(long time, double price, double volume = 0) =>
+        JS.InvokeVoidAsync("tickline.tick", Id, new { time, price, volume });
+
+    /// <summary>Show a position: a marker at the entry and a price line until expiry. Returns the overlay ids.</summary>
+    public ValueTask<string[]> ShowPosition(long time, double price, string side, long expiry) =>
+        JS.InvokeAsync<string[]>("tickline.position", Id, time, price, side, expiry);
+
+    [JSInvokable]
+    public async Task<IReadOnlyList<Candle>> RequestHistory(long before) =>
+        LoadOlder is null ? [] : await LoadOlder(before);
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("tickline.dispose", Id); } catch (JSDisconnectedException) { }
+        self?.Dispose();
+    }
+
+    // Times are Unix milliseconds (UTC). Property names serialise to camelCase, which the chart expects.
+    public record Candle(long Time, double Open, double High, double Low, double Close, double Volume = 0);
+}

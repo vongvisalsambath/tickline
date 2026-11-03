@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tickline: plain HTML example</title>
+  <style>
+    body { margin: 0; padding: 16px; background: #0b0f17; color: #e6e9ef; font: 15px system-ui, sans-serif; }
+    trade-chart { display: block; height: 70vh; min-height: 360px; border-radius: 12px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <!--
+    A live BTC/USDT chart with no build step.
+    In your own page, load the script from a CDN instead:
+      <script src="https://unpkg.com/tickline@0.1.0/dist/tickline.umd.js"></script>
+    In this repository, run `npm run build` first, then serve the folder (for example `npx serve .`) and open /examples/plain.html.
+  -->
+  <script src="../dist/tickline.umd.js"></script>
+
+  <trade-chart id="chart" symbol="BTC/USDT" timeframe="1m" indicators="sma:20, volume"></trade-chart>
+  <p id="status">Loading…</p>
+
+  <script>
+    const chart = document.getElementById("chart");
+    const status = document.getElementById("status");
+    const REST = "https://data-api.binance.vision/api/v3/klines";
+    const toCandle = (r) => ({ time: r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] });
+
+    async function candles(before) {
+      const url = `${REST}?symbol=BTCUSDT&interval=1m&limit=500${before ? `&endTime=${before - 1}` : ""}`;
+      return (await (await fetch(url)).json()).map(toCandle);
+    }
+
+    (async () => {
+      chart.setData(await candles());
+
+      const ws = new WebSocket("wss://data-stream.binance.vision/ws/btcusdt@aggTrade");
+      ws.onopen = () => (status.textContent = "Live");
+      ws.onclose = () => (status.textContent = "Disconnected");
+      ws.onmessage = (e) => {
+        const t = JSON.parse(e.data);
+        chart.tick({ time: t.T, price: +t.p, volume: +t.q });
+      };
+    })();
+
+    // older candles when the user scrolls back
+    chart.addEventListener("tl-requesthistory", async (e) => chart.prependData(await candles(e.detail.before)));
+
+    // a marker where the user clicks
+    chart.addEventListener("tl-click", (e) => {
+      if (e.detail.price != null) chart.addMarker({ time: e.detail.time, price: e.detail.price, side: "neutral", text: "Note" });
+    });
+  </script>
+</body>
+</html>

@@ -26,7 +26,8 @@
     "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
     "dev": "node scripts/build.mjs --watch",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "site": "npm run build && node scripts/site.mjs"
   },
   "keywords": [
     "chart",
