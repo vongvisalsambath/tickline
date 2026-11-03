@@ -1,11 +1,13 @@
 // Tickline: a live trading chart for any website.
 export { Chart } from "./chart";
-export type { ChartEvents, IndicatorInfo, IndicatorStyle } from "./chart";
+export type { ChartEvents, ChartState, IndicatorInfo, IndicatorStyle } from "./chart";
+export { syncCharts } from "./sync";
+export type { SyncOptions, SyncTarget } from "./sync";
 export { defaultOptions, DEFAULT_LABELS } from "./options";
 export type {
   ChartOptions, ResolvedOptions, ThemeInput, LineStyle, TimeLabelKind, LayoutOptions, SeriesOptions, GridOptions, PriceScaleOptions,
   TimeScaleOptions, CrosshairOptions, LegendOptions, LastPriceOptions, InteractionOptions, AnimationOptions, HistoryOptions,
-  DrawingOptions, FormatOptions, Labels, UiOptions,
+  DrawingOptions, FormatOptions, Labels, UiOptions, LivePositionOptions, WatermarkOptions,
 } from "./options";
 export { registerIndicator, listIndicators, getIndicator, sma, ema, rsi, stdev } from "./indicators";
 export type { IndicatorDefinition, IndicatorOutput, IndicatorLine } from "./indicators";

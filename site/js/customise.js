@@ -68,13 +68,16 @@ function init() {
     const f = form.elements;
     const v = (n) => f[n].value, on = (n) => f[n].checked;
     const grid = v("grid");
+    const pos = { auto: { x: null, y: null }, center: { x: 0.5, y: 0.5 }, right: { x: 0.8, y: 0.5 }, x: { x: 0.5, y: null } }[v("pos")];
     // every setting from the form, so turning something back on works too
     const all = {
       type: v("type"),
       grid: { horizontal: grid === "both" || grid === "horizontal", vertical: grid === "both" || grid === "vertical" },
       crosshair: { mode: v("crosshair") },
       lastPrice: { line: v("line"), countdown: on("countdown"), pulse: on("pulse") },
-      series: { candleWidth: +v("candleWidth"), wicks: on("wicks") },
+      series: { candleWidth: +v("candleWidth"), wicks: on("wicks"), highLowLabels: on("highLow") },
+      livePosition: pos,
+      watermark: { text: on("watermark") ? "{symbol}" : "" },
       layout: { fontSize: +v("fontSize") },
       timeScale: { rightPadding: +v("rightPadding"), visible: on("timeScale") },
       priceScale: { visible: on("priceScale") },
@@ -105,7 +108,11 @@ function init() {
       for (const [k, val] of Object.entries(obj)) {
         if (k === "labels" || k === "locale") continue;
         const path = prefix ? `${prefix}.${k}` : k;
-        if (val && typeof val === "object") walk(val, base?.[k], path);
+        if (val && typeof val === "object") {
+          // a group like livePosition goes in whole, so { x: 0.5, y: null } stays readable
+          if (k === "livePosition") { if (val.x !== base?.[k]?.x || val.y !== base?.[k]?.y) put(path, val); continue; }
+          walk(val, base?.[k], path);
+        }
         else if (base?.[k] !== val) put(path, val);
       }
     };
@@ -129,7 +136,9 @@ const defaults = {
   grid: { horizontal: true, vertical: true },
   crosshair: { mode: "snap" },
   lastPrice: { line: "short", countdown: true, pulse: true },
-  series: { candleWidth: 0.72, wicks: true },
+  series: { candleWidth: 0.72, wicks: true, highLowLabels: false },
+  livePosition: { x: null, y: null },
+  watermark: { text: "" },
   layout: { fontSize: 11 },
   timeScale: { rightPadding: 0.2, visible: true },
   priceScale: { visible: true },

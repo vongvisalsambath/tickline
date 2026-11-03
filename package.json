@@ -25,9 +25,11 @@
   "scripts": {
     "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
     "dev": "node scripts/build.mjs --watch",
-    "test": "vitest run",
+    "test": "node scripts/build-mcp.mjs && vitest run",
     "typecheck": "tsc --noEmit",
-    "site": "npm run build && node scripts/site.mjs"
+    "site": "npm run build && node scripts/site.mjs",
+    "build:mcp": "node scripts/build-mcp.mjs",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "chart",
@@ -43,13 +45,15 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vongvisalsambath/tickline"
+    "url": "git+https://github.com/vongvisalsambath/tickline.git"
   },
   "homepage": "https://tickline-chart.vercel.app",
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "esbuild": "^0.28.2",
-    "happy-dom": "^20.0.10",
+    "happy-dom": "^21.0.4",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^5.1.0",
+    "zod": "^4.6.7"
   }
 }

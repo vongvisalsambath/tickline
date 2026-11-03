@@ -37,6 +37,8 @@ The most common settings also have their own attributes (see [Attributes](#attri
 - [crosshair](#crosshair)
 - [legend](#legend)
 - [lastPrice](#lastprice): live price line, tag, pulse, countdown
+- [livePosition](#liveposition): keep the live price at a fixed place on screen
+- [watermark](#watermark)
 - [interaction](#interaction): pan, zoom, keyboard, editing
 - [animation](#animation)
 - [history](#history): loading older candles
@@ -84,6 +86,7 @@ Shorthands kept for convenience: `animate` (= `animation.enabled`), `countdown` 
 | `series.candleWidth` | `0.72` | Candle body width as a share of its slot (0.1–1). Also used for histogram bars |
 | `series.wicks` | `true` | Draw the high–low wicks |
 | `series.lineWidth` | `2` | Line width in px for `line` and `area` charts |
+| `series.highLowLabels` | `false` | Small price labels at the highest high and lowest low in view |
 
 Colours of candles and lines come from the [theme](#theme) (`up`, `down`, `line`, `areaTop`, `areaBottom`).
 
@@ -145,6 +148,43 @@ The colours are the theme's `crosshair`, `pillBackground` and `pillText`.
 | `lastPrice.emphasisDigits` | `3` | Trailing digits of the tag drawn larger, so small moves stand out. `0` turns it off |
 | `lastPrice.pulse` | `true` | The glowing dot at the live price |
 | `lastPrice.countdown` | `true` | Time left in the current candle, next to the live price (timeframes of 2 seconds or more) |
+| `lastPrice.countdownDirection` | `"down"` | Count down to the candle's close (`"down"`) or up from its open (`"up"`) |
+
+## livePosition
+
+Keeps the live price at a fixed place on screen while the chart follows it. Both values are a share of the chart, from 0 to 1, or `null`.
+
+| Setting | Default | |
+|---|---|---|
+| `livePosition.x` | `null` | Across the plot, from the left edge (0) to the right edge (1). `null` uses `timeScale.rightPadding` |
+| `livePosition.y` | `null` | Down the price pane, from the top (0) to the bottom (1). `null` lets the price scale fit the prices in view |
+
+```js
+chart.setOptions({ livePosition: { x: 0.5, y: 0.5 } });  // live price in the centre of the chart
+chart.setOptions({ livePosition: { x: 0.8, y: 0.5 } });  // 80% across, at mid height
+chart.setOptions({ livePosition: { x: 0.5 } });          // centred across; the scale still fits the prices
+chart.setOptions({ livePosition: { x: null, y: null } }); // back to normal
+```
+
+```html
+<trade-chart live-position="center"></trade-chart>       <!-- or "0.8 0.5", or "0.5" for x only -->
+```
+
+With `y` set, the price scale is chosen so the live price stays at that height and every price in view still fits. When the user scrolls back in time, the chart stops following and the scale fits the prices again; going back to live (⌖, End or double-click) puts the price back in place.
+
+## watermark
+
+Large, faint text behind the candles.
+
+| Setting | Default | |
+|---|---|---|
+| `watermark.text` | `""` | The text, or `""` for none. `{symbol}` and `{timeframe}` are replaced |
+| `watermark.color` | `""` | Colour; `""` uses the theme's text colour, faded |
+| `watermark.fontSize` | `0` | Font size in px; `0` sizes it to the chart |
+
+```html
+<trade-chart symbol="EUR/USD" watermark="{symbol}"></trade-chart>
+```
 
 ## interaction
 
@@ -236,7 +276,12 @@ Every piece of text the chart shows, for translation. `{n}` in `zoomLimit` becom
 | `labels.drawingTools`, `selectedDrawing` | `"Drawing tools"`, `"Selected drawing"` |
 | `labels.delete`, `deleteDrawing` | `"Delete"`, `"Delete drawing"` |
 | `labels.color` | `"Colour"` |
-| `labels.tools.line` … `tools.fib` | `"Line"`, `"Trend line"`, `"Horizontal line"`, `"Vertical line"`, `"Fibonacci retracement"` |
+| `labels.screenshot` | `"Download image"` |
+| `labels.fullscreen`, `exitFullscreen` | `"Full screen"`, `"Exit full screen"` |
+| `labels.loading` | `"Loading…"` |
+| `labels.lock`, `unlock`, `duplicate`, `hide` | `"Lock"`, `"Unlock"`, `"Duplicate"`, `"Hide"` |
+| `labels.alert` | `"Alert"` (default text by price alerts) |
+| `labels.tools.line` … `tools.measure` | `"Line"`, `"Trend line"`, `"Horizontal line"`, `"Vertical line"`, `"Rectangle"`, `"Fibonacci retracement"`, `"Measure"` |
 
 ```js
 chart.setOptions({
@@ -261,9 +306,13 @@ The HTML controls of `<trade-chart>`. The `Chart` class has no built-in buttons 
 | `ui.zoomButtons` | `true` | The − ⌖ + buttons that appear on hover |
 | `ui.liveButton` | `true` | The "Live ▸" button that appears after scrolling back |
 | `ui.drawingToolbar` | `true` | The drawing toolbar |
-| `ui.drawingTools` | all five | Which tools it offers, in order: `["line", "trend", "horizontal", "vertical", "fib"]` |
+| `ui.drawingTools` | all seven | Which tools it offers, in order: `["line", "trend", "horizontal", "vertical", "rect", "fib", "measure"]` |
 | `ui.drawingBar` | `true` | Colours and Delete for the selected drawing |
 | `ui.zoomLimitMessage` | `true` | The message at the closest zoom |
+| `ui.screenshotButton` | `true` | A button that downloads the chart as a PNG image |
+| `ui.fullscreenButton` | `true` | A button (and the F key) that shows the chart full screen |
+
+On touch screens the zoom, image and full-screen buttons appear when the user taps the chart. On small charts (narrower than 520 px or shorter than 420 px) the drawing tools fold into one pencil button.
 
 Each control has a `part` name for styling from outside: `chart`, `controls`, `live-button`, `drawing-tools`, `drawing-bar` and `toast`.
 
@@ -349,9 +398,25 @@ Attributes set the most common settings without any JavaScript.
 | `legend` | `legend.visible` | `false` hides it |
 | `controls` | `ui` | `none` hides every built-in button |
 | `drawing-tools` | `ui.drawingTools` | `false` hides the toolbar, or a list such as `trend, horizontal, fib` |
+| `live-position` | `livePosition` | `center`, `0.8 0.5` (x then y), `0.5` (x only) |
+| `watermark` | `watermark.text` | Any text; `{symbol}` and `{timeframe}` are replaced |
 | `options` | everything | JSON with any settings |
 
 ## Recipes
+
+**Keep the live price in the centre of the screen:**
+
+```js
+chart.setOptions({ livePosition: { x: 0.5, y: 0.5 } });
+```
+
+**A download button of your own, and full screen from your own button:**
+
+```js
+saveButton.onclick = () => chart.downloadImage("my-chart.png", { pixelRatio: 2 });
+const blob = await chart.toBlob({ type: "image/jpeg", quality: 0.9 }); // to upload or share
+fullButton.onclick = () => chart.toggleFullscreen();                   // <trade-chart> only
+```
 
 **A small sparkline** with no axes, legend or controls:
 

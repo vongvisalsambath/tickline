@@ -2,15 +2,18 @@
 
 A live trading chart for any website. One `<trade-chart>` tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. It works in plain HTML, React, Vue, Angular, Blazor, or anything else that renders HTML.
 
-**[Live demo and docs](https://tickline-chart.vercel.app)** · about 23 KB gzipped · no dependencies · MIT
+**[Live demo and docs](https://tickline-chart.vercel.app)** · about 28 KB gzipped · no dependencies · MIT
 
 - **Feels live.** The price eases between trades, the scale glides, and a countdown shows the time left in the candle.
 - **Six chart types.** Candles, hollow candles, bars, Heikin-Ashi, line and area. Timeframes from 5 seconds to 1 month.
 - **Indicators.** SMA, EMA, Bollinger Bands, RSI, MACD and volume, in resizable panes. Register your own.
-- **Drawing tools.** Line, trend line, horizontal, vertical and Fibonacci retracement. Users can select, drag, recolour and delete them, and you can save and restore them as JSON.
-- **Positions.** Markers, price lines, time lines with countdowns, and shaded zones show trades, orders and expiries.
+- **Drawing tools.** Line, trend line, horizontal, vertical, rectangle, Fibonacci retracement and a measure tool (change, %, candles, time). Users can select, drag, recolour, lock, duplicate and delete them, and you can save and restore them as JSON.
+- **Positions and alerts.** Markers, price lines, time lines with countdowns, and shaded zones show trades, orders and expiries. Price alerts fire an event when the price crosses them.
+- **Images and full screen.** Download the chart as a PNG (or get a Blob to upload), and show it full screen on any device, including iPhone.
+- **Live price where you want it.** Keep the live price in the centre of the screen, or at any position you choose.
 - **Configure almost everything.** Sizes, fonts, grid, axes, crosshair, legend, zoom limits, gestures, animation, number and date formats, every colour and every word, through [one documented options object](docs/configuration.md).
-- **Made for real use.** Touch and keyboard, HiDPI screens, light and dark themes, CSS variables. It pauses when hidden, caps the frame rate and loads older history on demand.
+- **Made for real use.** Responsive from small phones to large screens, touch and keyboard, HiDPI, light and dark themes. It pauses when hidden, caps the frame rate, loads older history on demand, keeps several charts in sync, and saves and restores a user's whole chart.
+- **Works with AI assistants.** An [MCP server](mcp/README.md) lets Claude, Cursor or VS Code look up the docs and settings, check settings, and write the integration code for your framework.
 
 ## Install
 
@@ -66,6 +69,32 @@ chart.addZone({ from: "top", to: entry, start: now, end: expiry, color: "rgba(34
 const expiryLine = chart.addTimeLine({ time: expiry, countdown: true, label: "Expiry" });
 
 chart.removeOverlay(expiryLine); // every add… method returns an id
+```
+
+### Images, full screen, alerts and more
+
+```js
+chart.downloadImage();                                  // EUR-USD-1m.png, without the crosshair
+const blob = await chart.toBlob({ pixelRatio: 2 });     // sharp PNG to upload or share
+chart.toggleFullscreen();                               // or the ⛶ button, or F
+
+chart.setOptions({ livePosition: { x: 0.5, y: 0.5 } }); // live price in the centre of the screen
+
+chart.addAlert({ price: 70_000, label: "70k" });
+chart.addEventListener("tl-alert", (e) => notify(`Price went ${e.detail.direction} through ${e.detail.price}`));
+
+chart.setLoading(true);                                 // while switching symbols
+chart.setVisibleRange({ from: Date.parse("2026-11-03T09:00Z"), to: Date.parse("2026-11-03T12:00Z") });
+
+localStorage.chart = JSON.stringify(chart.getState());  // the user's type, indicators, drawings, alerts and view
+chart.setState(JSON.parse(localStorage.chart));
+```
+
+Keep several charts in step (scroll, zoom and crosshair), for example a price chart above an indicator chart:
+
+```js
+import { syncCharts } from "tickline";
+const unlink = syncCharts([chartA, chartB]);
 ```
 
 ### Frameworks
@@ -129,14 +158,16 @@ Without JavaScript, use attributes for common settings, or put any settings in t
 | `timeScale` | Show or hide, label spacing, right padding, default, fewest and most candles in view |
 | `crosshair` | Snap, free or hidden; line style; axis tags |
 | `legend` | Symbol, OHLC, change, indicator row |
-| `lastPrice` | Price line, axis tag, emphasised digits, pulse, countdown |
+| `lastPrice` | Price line, axis tag, emphasised digits, pulse, countdown (down or up) |
+| `livePosition` | Keep the live price at a fixed place on screen, e.g. the centre |
+| `watermark` | Faint text behind the candles |
 | `interaction` | Pan, wheel zoom, pinch zoom, keyboard, double-click, pane resizing, closing indicators, editing drawings, zoom step |
 | `animation` | On or off, price and scale smoothing |
 | `history` | When to ask for older candles |
 | `drawings` | Default colour, width and style; colour palette; Fibonacci levels |
 | `format` | Your own functions for prices, times, countdowns and indicator values |
 | `labels` | Every piece of text, for translation |
-| `ui` | Which built-in buttons `<trade-chart>` shows, and which drawing tools |
+| `ui` | Which built-in buttons `<trade-chart>` shows (zoom, live, image, full screen), and which drawing tools |
 
 ### Attributes
 
@@ -162,6 +193,8 @@ Without JavaScript, use attributes for common settings, or put any settings in t
 | `grid` | `both` (default), `horizontal`, `vertical` or `none` |
 | `legend` | `false` hides the legend |
 | `drawing-tools` | `false` hides the toolbar, or a list such as `trend, horizontal, fib` |
+| `live-position` | `center`, or x and y shares such as `0.8 0.5` |
+| `watermark` | Faint text behind the candles, e.g. `{symbol}` |
 | `controls` | `none` hides all built-in buttons |
 | `options` | Any settings, as JSON |
 
@@ -177,9 +210,15 @@ Without JavaScript, use attributes for common settings, or put any settings in t
 | `updateOverlay(id, patch)`, `removeOverlay(id)`, `clearOverlays()` | Change or remove overlays |
 | `setOptions(options)`, `options` | Change settings; read every setting ([guide](docs/configuration.md)) |
 | `addIndicator(id, params?, style?)`, `updateIndicator(key, params?, style?)`, `removeIndicator(key)`, `clearIndicators()`, `indicatorList` | Indicators in code, with optional colours, width, levels and pane height |
-| `setDrawingTool(tool \| null)` | `line`, `trend`, `horizontal`, `vertical`, `fib` |
-| `drawings`, `setDrawings(list)`, `addDrawing(d)`, `updateDrawing(id, patch)`, `removeDrawing(id)`, `clearDrawings()` | Save, restore and edit drawings |
+| `addAlert({ price, label?, color?, once? })`, `alerts` | Price alerts; `tl-alert` fires when the price crosses one |
+| `setDrawingTool(tool \| null)` | `line`, `trend`, `horizontal`, `vertical`, `rect`, `fib`, `measure` |
+| `drawings`, `setDrawings(list)`, `addDrawing(d)`, `updateDrawing(id, patch)`, `duplicateDrawing(id)`, `removeDrawing(id)`, `clearDrawings()` | Save, restore and edit drawings (`locked`, `hidden`, colour, width, style) |
 | `zoomIn()`, `zoomOut()`, `goLive()`, `fitContent()` | View |
+| `visibleRange`, `setVisibleRange({ from, to }, { follow? })`, `scrollToTime(time, position?)` | Read or set the time range in view |
+| `downloadImage(filename?, options?)`, `toBlob(options?)`, `toDataURL(options?)` | The chart as an image (`type`, `quality`, `pixelRatio`) |
+| `enterFullscreen()`, `exitFullscreen()`, `toggleFullscreen()`, `isFullscreen` | Full screen (`<trade-chart>`; falls back to covering the page where the browser can't) |
+| `setLoading(on)` | A "Loading…" placeholder while you fetch data |
+| `getState()`, `setState(state)` | A user's chart (type, indicators, drawings, alerts, view) as JSON |
 | `currentTheme` | The colours and fonts in use |
 | `chart` | The underlying `Chart` instance |
 
@@ -199,6 +238,8 @@ All events are `CustomEvent`s on the element, with the data in `detail`.
 | `tl-drawingschange` | All drawings, ready to save |
 | `tl-drawingselect` | The selected drawing, or `null` |
 | `tl-toolchange` | The active drawing tool, or `null` |
+| `tl-alert` | `{ id, price, direction, time, label }`: the price crossed an alert |
+| `tl-fullscreenchange` | `{ fullscreen }` |
 
 ### Styling
 
@@ -240,16 +281,27 @@ chart.addIndicator("mid", { period: 14 }); // or indicators="mid:14"
 
 ### Keyboard
 
-← → pan · + − zoom · End back to live · Home fit all · Esc cancels drawing · Delete removes the selected drawing. Turn shortcuts off with `interaction: { keyboard: false }`.
+← → pan · + − zoom · End back to live · Home fit all · Esc cancels drawing · Delete removes the selected drawing. F toggles full screen. Turn shortcuts off with `interaction: { keyboard: false }`.
+
+## AI assistants (MCP)
+
+`tickline-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server. Add it to Claude Code, Claude Desktop, Cursor or VS Code, and your assistant can look up Tickline's docs and settings, check a settings object, and write the integration code for your framework and data source.
+
+```sh
+claude mcp add tickline -- npx -y tickline-mcp
+```
+
+Setup for other apps and the list of tools: [mcp/README.md](mcp/README.md).
 
 ## Develop
 
 ```sh
 npm ci
-npm test          # unit tests
+npm test          # builds the MCP server, then runs the unit tests
 npm run typecheck
 npm run build     # dist/
 npm run site      # build, then copy the library into site/ for the demo page
+npm run build:mcp # mcp/dist/tickline-mcp.js
 ```
 
 Open `demo/dev.html` or `site/index.html` through any static server (for example `npx serve .`).

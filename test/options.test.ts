@@ -132,7 +132,8 @@ describe("<trade-chart> settings", () => {
     expect(el.options.timeScale.rightPadding).toBe(0.05);
     document.body.replaceChildren(el);
     expect(el.options.timeScale.rightPadding).toBe(0.05);
-    expect(el.shadowRoot!.querySelector(".controls")!.classList.contains("off")).toBe(true);
+    expect(el.shadowRoot!.querySelector('[data-a="in"]')!.classList.contains("off")).toBe(true);
+    expect(el.shadowRoot!.querySelector('[data-a="image"]')!.classList.contains("off")).toBe(false);
   });
 
   it("translates the controls", () => {

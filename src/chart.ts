@@ -1,8 +1,8 @@
 // The chart engine: one canvas, a view (time per pixel + right edge), a render loop, and pointer/keyboard input.
 // Framework-free; <trade-chart> (element.ts) wraps it. Everything is drawn in CSS pixels on a HiDPI canvas.
 import type {
-  Candle, ChartType, CrosshairInfo, MarkerOptions, PriceLineOptions, Theme, Tick, TimeLineOptions, Timeframe,
-  VisibleRange, ZoneOptions,
+  AlertEvent, AlertOptions, Candle, ChartType, CrosshairInfo, ImageOptions, MarkerOptions, PriceLineOptions, Theme, Tick, TimeLineOptions,
+  Timeframe, VisibleRange, ZoneOptions,
 } from "./types";
 import { CandleStore, heikinAshi } from "./data";
 import { autoPrecision, formatPrice, priceTicks, splitEmphasis, stepDecimals, niceStep } from "./price";
@@ -18,7 +18,21 @@ type Overlay =
   | { kind: "marker"; o: MarkerOptions }
   | { kind: "priceLine"; o: PriceLineOptions }
   | { kind: "timeLine"; o: TimeLineOptions }
-  | { kind: "zone"; o: ZoneOptions };
+  | { kind: "zone"; o: ZoneOptions }
+  | { kind: "alert"; o: AlertOptions };
+
+/** A user's chart, to save and restore: chart type, indicators, drawings, alerts and the view. */
+export interface ChartState {
+  version: 1;
+  type: ChartType;
+  /** The timeframe it was saved with. setState doesn't change it: load candles for it first. */
+  timeframe: Timeframe;
+  indicators: { id: string; params: Record<string, number>; style: IndicatorStyle }[];
+  drawings: Drawing[];
+  alerts: AlertOptions[];
+  /** Following the live price, or a fixed time range. */
+  view: { following: boolean; from?: number; to?: number };
+}
 
 export interface ChartEvents {
   crosshair: CrosshairInfo | null;
@@ -38,6 +52,8 @@ export interface ChartEvents {
   drawingselect: Drawing | null;
   /** The active drawing tool changed (null when placing finished or was cancelled). */
   toolchange: DrawingTool | null;
+  /** The price crossed an alert. */
+  alert: AlertEvent;
 }
 
 export interface IndicatorInfo {
@@ -125,6 +141,9 @@ export class Chart {
   get drawingColor(): string { return this.opts.drawings.color; }
   set drawingColor(c: string) { this.opts.drawings.color = c; }
   private numberFormats = new Map<string, Intl.NumberFormat>();
+  private loadingOn = false;
+  /** Crosshair time shown because another chart is synced to this one. */
+  private syncTime: number | null = null;
   private dateFormats = new Map<string, Intl.DateTimeFormat>();
 
   // input
@@ -158,6 +177,11 @@ export class Chart {
     if (typeof ResizeObserver !== "undefined") {
       this.resizeObs = new ResizeObserver(() => this.resize());
       this.resizeObs.observe(container);
+    } else if (typeof window !== "undefined") {
+      // older browsers: follow the window size instead
+      const onResize = () => this.resize();
+      window.addEventListener("resize", onResize);
+      this.cleanups.push(() => window.removeEventListener("resize", onResize));
     }
     if (typeof IntersectionObserver !== "undefined") {
       this.interObs = new IntersectionObserver((es) => { this.visible = es.some((e) => e.isIntersecting); this.kick(); });
@@ -186,19 +210,27 @@ export class Chart {
 
   /** A live trade or quote: grows the current candle or starts the next one. */
   tick(t: Tick): void {
+    const prev = this.store.last?.close ?? NaN;
     const r = this.store.tick(t);
     if (r === "ignored") return;
     if (!Number.isFinite(this.displayPrice) || !this.animated) this.displayPrice = t.price;
     this.onDataChanged(false);
+    this.checkAlerts(prev, t.price, t.time);
   }
 
   /** A whole candle (e.g. from a kline stream): replaces the current one or appends a new one. */
   update(c: Candle): void {
+    const prev = this.store.last?.close ?? NaN;
     const r = this.store.upsert(c);
     if (r === "ignored") return;
     if (!Number.isFinite(this.displayPrice) || !this.animated) this.displayPrice = c.close;
     this.onDataChanged(false);
+    this.checkAlerts(prev, c.close, c.time);
   }
+
+  /** Shows a striped "Loading…" placeholder over the chart (e.g. while switching symbols), or hides it. */
+  setLoading(on: boolean): void { this.loadingOn = on; this.markDirty(); }
+  get loading(): boolean { return this.loadingOn; }
 
   /** All candles currently held (oldest first). */
   get data(): readonly Candle[] { return this.store.all; }
@@ -263,9 +295,15 @@ export class Chart {
   addPriceLine(o: PriceLineOptions): string { return this.addOverlay({ kind: "priceLine", o }); }
   addTimeLine(o: TimeLineOptions): string { return this.addOverlay({ kind: "timeLine", o }); }
   addZone(o: ZoneOptions): string { return this.addOverlay({ kind: "zone", o }); }
+  /** A price alert: a line that fires the "alert" event when the price crosses it. Returns its id. */
+  addAlert(o: AlertOptions): string { return this.addOverlay({ kind: "alert", o }); }
+  /** All alerts still waiting, with their ids. */
+  get alerts(): (AlertOptions & { id: string })[] {
+    return [...this.overlays].filter(([, ov]) => ov.kind === "alert").map(([id, ov]) => ({ ...(ov.o as AlertOptions), id }));
+  }
 
   /** Changes an overlay's options (merged). */
-  updateOverlay(id: string, patch: Partial<MarkerOptions & PriceLineOptions & TimeLineOptions & ZoneOptions>): void {
+  updateOverlay(id: string, patch: Partial<MarkerOptions & PriceLineOptions & TimeLineOptions & ZoneOptions & AlertOptions>): void {
     const ov = this.overlays.get(id);
     if (!ov) return;
     ov.o = { ...ov.o, ...patch } as never;
@@ -335,8 +373,21 @@ export class Chart {
     return id;
   }
 
-  /** Changes a drawing's colour, width, style or lock. */
-  updateDrawing(id: string, patch: Partial<Pick<Drawing, "color" | "width" | "style" | "locked">>): void {
+  /** Copies a drawing, a little to the right and below, and selects the copy. Returns its id. */
+  duplicateDrawing(id: string): string | null {
+    const d = this.drawingList.find((x) => x.id === id);
+    if (!d) return null;
+    const dt = 24 * (this.msPerPx || this.tf.ms / 10);
+    const dp = this.msPerPx ? this.yToPrice(0) - this.yToPrice(24) : 0;
+    const copy: Drawing = { ...d, id: "dr" + this.nextId++, locked: false, points: d.points.map((q) => ({ time: q.time + dt, price: q.price - dp })) };
+    this.drawingList.push(copy);
+    this.drawingsChanged();
+    this.select(copy.id);
+    return copy.id;
+  }
+
+  /** Changes a drawing's colour, width, style, lock or visibility. */
+  updateDrawing(id: string, patch: Partial<Pick<Drawing, "color" | "width" | "style" | "locked" | "hidden">>): void {
     const d = this.drawingList.find((x) => x.id === id);
     if (!d) return;
     Object.assign(d, patch);
@@ -361,8 +412,31 @@ export class Chart {
 
   // ================================================================ public API: view
 
-  zoomIn(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.opts.timeScale.rightPadding : 0.5), 1 / this.opts.interaction.zoomStep); }
-  zoomOut(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.opts.timeScale.rightPadding : 0.5), this.opts.interaction.zoomStep); }
+  zoomIn(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.rightPad() : 0.5), 1 / this.opts.interaction.zoomStep); }
+  zoomOut(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.rightPad() : 0.5), this.opts.interaction.zoomStep); }
+
+  /**
+   * Shows this time range (ms). With `follow`, keeps following the live price at this zoom
+   * instead of staying on the range.
+   */
+  setVisibleRange(range: VisibleRange, opts: { follow?: boolean } = {}): void {
+    if (!(range.to > range.from)) return;
+    this.msPerPx = Math.min(this.maxMsPerPx(), Math.max(this.minMsPerPx(), (range.to - range.from) / this.plotW()));
+    if (opts.follow) this.setFollowing(true);
+    else { this.rightTime = range.to; this.setFollowing(false); }
+    this.markDirty();
+  }
+
+  /** Scrolls so `time` is at `position` across the chart (0 left, 0.5 middle, 1 right). Stops following. */
+  scrollToTime(time: number, position = 0.5): void {
+    if (!this.msPerPx) this.msPerPx = Math.min(this.maxMsPerPx(), Math.max(this.minMsPerPx(), this.defaultMsPerPx()));
+    this.rightTime = time + (1 - Math.min(1, Math.max(0, position))) * this.plotW() * this.msPerPx;
+    this.setFollowing(false);
+    this.markDirty();
+  }
+
+  /** Shows a vertical crosshair at `time` without a pointer (used to sync charts), or hides it with null. */
+  setCrosshair(time: number | null): void { this.syncTime = time; this.markDirty(); }
   /** Back to the live edge, following new prices. */
   goLive(): void { this.setFollowing(true); this.markDirty(); }
   get isFollowing(): boolean { return this.following; }
@@ -371,11 +445,74 @@ export class Chart {
     const first = this.store.first, last = this.store.last;
     if (!first || !last) return;
     const span = this.store.endOf(last) - first.time;
-    this.msPerPx = Math.max(this.minMsPerPx(), span / (this.plotW() * (1 - this.opts.timeScale.rightPadding)));
+    this.msPerPx = Math.max(this.minMsPerPx(), span / (this.plotW() * (1 - this.rightPad())));
     this.setFollowing(true);
     this.markDirty();
   }
   get visibleRange(): VisibleRange { return { ...this.lastRange }; }
+
+  // ================================================================ public API: images and state
+
+  /** The chart as an image Blob (PNG by default), without the crosshair. */
+  toBlob(o: ImageOptions = {}): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      this.renderForImage(o, (c) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("The browser couldn't create the image."))), o.type ?? "image/png", o.quality));
+    });
+  }
+
+  /** The chart as a data: URL (PNG by default). */
+  toDataURL(o: ImageOptions = {}): string {
+    let url = "";
+    this.renderForImage(o, (c) => { url = c.toDataURL(o.type ?? "image/png", o.quality); });
+    return url;
+  }
+
+  /** Downloads the chart as an image, named after the symbol and timeframe unless you give a name. */
+  async downloadImage(filename?: string, o: ImageOptions = {}): Promise<void> {
+    const blob = await this.toBlob(o);
+    const ext = (o.type ?? "image/png").split("/")[1].replace("jpeg", "jpg");
+    const base = (this.opts.symbol || "chart").replace(/[^\w.-]+/g, "-") + "-" + this.opts.timeframe;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename ?? `${base}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  /** The user's chart as plain data (JSON-safe): type, indicators, drawings, alerts and view. */
+  getState(): ChartState {
+    return {
+      version: 1,
+      type: this.opts.type,
+      timeframe: this.opts.timeframe,
+      indicators: this.indicatorList.map((i) => ({ id: i.id, params: i.params, style: i.style })),
+      drawings: this.drawings,
+      alerts: this.alerts.map(({ id: _id, ...a }) => a),
+      view: this.following ? { following: true } : { following: false, from: this.lastRange.from, to: this.lastRange.to },
+    };
+  }
+
+  /** Restores what getState() returned. Parts you leave out are kept as they are. */
+  setState(st: Partial<ChartState>): void {
+    if (st.type) this.setType(st.type);
+    if (st.indicators) {
+      this.clearIndicators();
+      for (const i of st.indicators) { try { this.addIndicator(i.id, i.params, i.style); } catch (e) { console.warn(`Tickline: ${(e as Error).message}`); } }
+      this.emit("indicatorschange", this.indicatorList);
+    }
+    if (st.drawings) this.setDrawings(st.drawings);
+    if (st.alerts) {
+      for (const [id, ov] of [...this.overlays]) if (ov.kind === "alert") this.overlays.delete(id);
+      st.alerts.forEach((a) => this.addAlert(a));
+    }
+    if (st.view) {
+      if (st.view.following || st.view.from === undefined || st.view.to === undefined) this.goLive();
+      else this.setVisibleRange({ from: st.view.from, to: st.view.to });
+    }
+    this.markDirty();
+  }
 
   // ================================================================ events
 
@@ -404,6 +541,40 @@ export class Chart {
   // ================================================================ internals: data and view
 
   private get animated(): boolean { return this.opts.animation.enabled && !this.reducedMotion; }
+
+  /** Space right of the live candle: from livePosition.x when set, else timeScale.rightPadding. */
+  private rightPad(): number {
+    const x = this.opts.livePosition.x;
+    return x === null ? this.opts.timeScale.rightPadding : 1 - x;
+  }
+
+  private checkAlerts(prev: number, next: number, time: number): void {
+    if (!Number.isFinite(prev) || prev === next) return;
+    for (const [id, ov] of [...this.overlays]) {
+      if (ov.kind !== "alert") continue;
+      const p = ov.o.price;
+      const up = prev < p && next >= p, down = prev > p && next <= p;
+      if (!up && !down) continue;
+      if (ov.o.once !== false) this.overlays.delete(id);
+      this.emit("alert", { id, price: p, direction: up ? "up" : "down", time, label: ov.o.label });
+    }
+  }
+
+  /** Draws one clean frame (optionally at another pixel ratio), hands the canvas over, then restores the view. */
+  private renderForImage(o: ImageOptions, use: (c: HTMLCanvasElement) => void): void {
+    const pointer = this.pointer, sync = this.syncTime, dpr = this.dpr;
+    if (!o.crosshair) { this.pointer = null; this.syncTime = null; }
+    const ratio = o.pixelRatio && o.pixelRatio > 0 ? Math.min(8, o.pixelRatio) : dpr;
+    if (ratio !== dpr) { this.dpr = ratio; this.canvas.width = Math.round(this.w * ratio); this.canvas.height = Math.round(this.h * ratio); }
+    try {
+      this.draw(performance.now());
+      use(this.canvas);
+    } finally {
+      this.pointer = pointer; this.syncTime = sync;
+      if (ratio !== dpr) { this.dpr = dpr; this.canvas.width = Math.round(this.w * dpr); this.canvas.height = Math.round(this.h * dpr); }
+      this.draw(performance.now());
+    }
+  }
 
   // ---------------------------------------------------------------- formatting (settings: locale, format.*)
 
@@ -603,14 +774,26 @@ export class Chart {
       if (Math.abs(last.close - this.displayPrice) < Math.abs(last.close) * 1e-9) this.displayPrice = last.close;
     }
     // the view follows the live edge, with empty space on the right
-    if (this.following) this.rightTime = this.liveTime() + this.plotW() * this.opts.timeScale.rightPadding * this.msPerPx;
+    if (this.following) this.rightTime = this.liveTime() + this.plotW() * this.rightPad() * this.msPerPx;
     // price axis fits the visible candles, easing so it never jumps
     const target = this.visibleExtent();
     if (target) {
       const [lo, hi] = target;
-      if (!this.scaleReady || !this.animated) { this.priceMin = lo; this.priceMax = hi; this.scaleReady = true; }
+      const k = 1 - Math.exp(-dt / Math.max(1, this.opts.animation.scaleSmoothing));
+      const ly = this.opts.livePosition.y;
+      if (ly !== null && this.following && Number.isFinite(this.displayPrice)) {
+        // keep the live price at a fixed height: choose a range that holds every visible price with it there
+        const top = this.padTop(), bottom = this.mainH() - this.opts.layout.paddingBottom;
+        const a = Math.min(0.98, Math.max(0.02, (ly * this.mainH() - top) / Math.max(1, bottom - top)));
+        const p = this.displayPrice;
+        const span = Math.max(hi - lo, (hi - p) / a, (p - lo) / (1 - a));
+        const cur = this.priceMax - this.priceMin;
+        const next = !this.scaleReady || !this.animated || !(cur > 0) ? span : cur + (span - cur) * k;
+        this.priceMax = p + a * next;
+        this.priceMin = this.priceMax - next;
+        this.scaleReady = true;
+      } else if (!this.scaleReady || !this.animated) { this.priceMin = lo; this.priceMax = hi; this.scaleReady = true; }
       else {
-        const k = 1 - Math.exp(-dt / Math.max(1, this.opts.animation.scaleSmoothing));
         this.priceMin += (lo - this.priceMin) * k;
         this.priceMax += (hi - this.priceMax) * k;
       }
@@ -716,8 +899,10 @@ export class Chart {
     ctx.beginPath();
     ctx.rect(0, 0, pw, mh);
     ctx.clip();
+    this.drawWatermark();
     this.drawZones();
     this.drawSeries();
+    if (this.opts.series.highLowLabels) this.drawHighLow(dec);
     this.drawMainIndicators();
     this.drawOverlays();
     this.drawDrawings(dec);
@@ -758,6 +943,7 @@ export class Chart {
     this.drawLiveTag(dec);
     this.drawCrosshair(dec);
     this.drawLegend(dec);
+    if (this.loadingOn) this.drawLoading();
   }
 
   private drawSeries(): void {
@@ -840,6 +1026,65 @@ export class Chart {
     }
   }
 
+  private drawWatermark(): void {
+    const wm = this.opts.watermark;
+    if (!wm.text) return;
+    const { ctx, theme: th } = this;
+    const text = wm.text.replace("{symbol}", this.opts.symbol).replace("{timeframe}", this.opts.timeframe).trim();
+    if (!text) return;
+    const pw = this.plotW(), mh = this.mainH();
+    let size = wm.fontSize > 0 ? wm.fontSize : Math.max(18, Math.min(96, mh / 4));
+    ctx.font = `700 ${size}px ${th.font}`;
+    const w = ctx.measureText(text).width;
+    if (!(wm.fontSize > 0) && w > pw * 0.8) { size = Math.max(14, (size * pw * 0.8) / w); ctx.font = `700 ${size}px ${th.font}`; }
+    ctx.fillStyle = wm.color || withAlpha(th.text, 0.12);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, pw / 2, (this.padTop() + mh) / 2);
+  }
+
+  /** Small labels at the highest high and lowest low in view. */
+  private drawHighLow(dec: number): void {
+    const { ctx, theme: th } = this;
+    const { list, from, to } = this.visibleCandles();
+    const left = this.xToTime(0), right = this.xToTime(this.plotW());
+    let hi = -1, lo = -1;
+    for (let i = from; i < to; i++) {
+      const c = list[i];
+      if (c.time + this.tf.ms < left || c.time > right) continue;
+      if (hi < 0 || c.high > list[hi].high) hi = i;
+      if (lo < 0 || c.low < list[lo].low) lo = i;
+    }
+    if (hi < 0) return;
+    ctx.font = this.font(-1);
+    ctx.fillStyle = th.textStrong;
+    ctx.textAlign = "center";
+    const label = (i: number, price: number, above: boolean) => {
+      const x = Math.min(this.plotW() - 40, Math.max(40, this.timeToX(list[i].time + this.tf.ms / 2)));
+      ctx.textBaseline = above ? "bottom" : "top";
+      ctx.fillText(this.fmtPrice(price, dec), x, this.priceToY(price) + (above ? -4 : 4));
+    };
+    label(hi, list[hi].high, true);
+    label(lo, list[lo].low, false);
+  }
+
+  /** Diagonal stripes and a label over the plot while loading. */
+  private drawLoading(): void {
+    const { ctx, theme: th } = this;
+    const pw = this.plotW(), ph = this.plotH();
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, pw, ph); ctx.clip();
+    ctx.fillStyle = withAlpha(th.background, 0.6);
+    ctx.fillRect(0, 0, pw, ph);
+    ctx.strokeStyle = withAlpha(th.text, 0.12);
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    for (let x = -ph; x < pw; x += 24) { ctx.moveTo(x, ph); ctx.lineTo(x + ph, 0); }
+    ctx.stroke();
+    ctx.restore();
+    pill(ctx, this.opts.labels.loading, pw / 2, ph / 2, { bg: th.background, fg: th.textStrong, font: this.font(2, "600", false), align: "center", border: th.axisLine });
+  }
+
   private drawZones(): void {
     const { ctx } = this;
     for (const ov of this.overlays.values()) {
@@ -867,6 +1112,14 @@ export class Chart {
         ctx.lineWidth = o.width ?? 1;
         ctx.setLineDash(dash(o.style ?? "dashed"));
         ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (ov.kind === "alert") {
+        const o = ov.o;
+        const y = crisp(this.priceToY(o.price));
+        ctx.strokeStyle = o.color ?? ALERT_COLOR;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(pw, y); ctx.stroke();
         ctx.setLineDash([]);
       } else if (ov.kind === "timeLine") {
         const o = ov.o;
@@ -903,6 +1156,14 @@ export class Chart {
   private drawPriceLineLabels(dec: number): void {
     const { ctx, theme: th } = this;
     for (const ov of this.overlays.values()) {
+      if (ov.kind === "alert") {
+        const o = ov.o, y = this.priceToY(o.price);
+        if (y < 0 || y > this.mainH()) continue;
+        const color = o.color ?? ALERT_COLOR;
+        if (this.opts.priceScale.visible) pill(ctx, this.fmtPrice(o.price, dec), this.plotW() + 4, y, { bg: color, fg: th.background, font: this.font(0), align: "left", width: this.axisW - 8 });
+        pill(ctx, o.label ?? this.opts.labels.alert, this.plotW() - 6, y - 11, { bg: color, fg: th.background, font: this.font(-1, "600", false), align: "right" });
+        continue;
+      }
       if (ov.kind !== "priceLine") continue;
       const o = ov.o;
       const y = this.priceToY(o.price);
@@ -952,7 +1213,7 @@ export class Chart {
     }
     // time left in the candle
     if (this.isLive() && lp.countdown && this.tf.ms >= 2000) {
-      const left = this.store.endOf(last) - Date.now();
+      const left = lp.countdownDirection === "up" ? Date.now() - last.time : this.store.endOf(last) - Date.now();
       if (left > 0) pill(ctx, this.fmtCountdown(left), x + (lineType ? 12 : Math.max(10, this.tf.ms / this.msPerPx / 2 + 6)), y - 14,
         { bg: withAlpha(th.background, 0.85), fg: th.textStrong, font: this.font(0), align: "left", border: th.axisLine });
     }
@@ -992,6 +1253,7 @@ export class Chart {
   private drawCrosshair(dec: number): void {
     const p = this.pointer;
     const ch = this.opts.crosshair;
+    if (!p && this.syncTime !== null && ch.mode !== "hidden") { this.drawSyncedCrosshair(); return; }
     if (!p || this.drag?.moved || ch.mode === "hidden") return;
     const { ctx, theme: th } = this;
     const pw = this.plotW(), ph = this.plotH();
@@ -1013,6 +1275,23 @@ export class Chart {
     if (this.opts.priceScale.visible) pill(ctx, value, pw + 4, p.y, { bg: th.pillBackground, fg: th.pillText, font: this.font(0), align: "left", width: this.axisW - 8 });
     const at = c && ch.mode === "snap" ? c.time : t;
     if (this.opts.timeScale.visible) pill(ctx, this.fmtTime(at, "crosshair"), snapX, ph + this.axisH() / 2, { bg: th.pillBackground, fg: th.pillText, font: this.font(0), align: "center" });
+  }
+
+  /** A vertical line at the time another (synced) chart is pointing at. */
+  private drawSyncedCrosshair(): void {
+    const { ctx, theme: th } = this;
+    const t = this.syncTime!;
+    const c = this.store.candleAt(t);
+    const x = c && this.opts.crosshair.mode === "snap" ? this.timeToX(c.time + this.tf.ms / 2) : this.timeToX(t);
+    if (x < 0 || x > this.plotW()) return;
+    ctx.strokeStyle = th.crosshair;
+    ctx.lineWidth = 1;
+    ctx.setLineDash(dash(this.opts.crosshair.style === "dashed" ? "dashed" : this.opts.crosshair.style));
+    ctx.beginPath(); ctx.moveTo(crisp(x), 0); ctx.lineTo(crisp(x), this.plotH()); ctx.stroke();
+    ctx.setLineDash([]);
+    if (this.opts.crosshair.labels && this.opts.timeScale.visible) {
+      pill(ctx, this.fmtTime(c ? c.time : t, "crosshair"), x, this.plotH() + this.axisH() / 2, { bg: th.pillBackground, fg: th.pillText, font: this.font(0), align: "center" });
+    }
   }
 
   /** Top-left: symbol, timeframe, and the hovered (or last) candle's values. */
@@ -1318,10 +1597,11 @@ export class Chart {
     for (let i = this.drawingList.length - 1; i >= 0; i--) {
       const d = this.drawingList[i];
       const pts = d.points.map((q) => this.toXY(q));
-      if (d.id === this.selectedId) {
+      if (d.id === this.selectedId && !d.hidden) {
         const h = pts.findIndex((q) => Math.hypot(q.x - p.x, q.y - p.y) <= 8);
         if (h >= 0) return { id: d.id, handle: h };
       }
+      if (d.hidden) continue;
       if (distToDrawing(d.tool, pts, p, this.plotW(), this.mainH(), this.fibYs(d)) <= 6) return { id: d.id, handle: -1 };
     }
     return null;
@@ -1346,6 +1626,7 @@ export class Chart {
       list.push({ id: "_preview", tool: this.placing.tool, points: [...this.placing.points, this.placing.hover], color: this.drawingColor, width: this.opts.drawings.width, style: "dashed" });
     }
     for (const d of list) {
+      if (d.hidden) continue;
       const pts = d.points.map((q) => this.toXY(q));
       ctx.strokeStyle = d.color;
       ctx.lineWidth = d.width ?? 1.5;
@@ -1356,6 +1637,37 @@ export class Chart {
         case "trend": { const e = rayEnd(pts[0], pts[1], pw, mh); ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(e.x, e.y); break; }
         case "horizontal": ctx.moveTo(0, crisp(pts[0].y)); ctx.lineTo(pw, crisp(pts[0].y)); break;
         case "vertical": ctx.moveTo(crisp(pts[0].x), 0); ctx.lineTo(crisp(pts[0].x), mh); break;
+        case "rect": {
+          const x = Math.min(pts[0].x, pts[1].x), y = Math.min(pts[0].y, pts[1].y);
+          const w = Math.abs(pts[1].x - pts[0].x), h = Math.abs(pts[1].y - pts[0].y);
+          ctx.fillStyle = withAlpha(d.color, 0.1);
+          ctx.fillRect(x, y, w, h);
+          ctx.rect(crisp(x), crisp(y), Math.round(w), Math.round(h));
+          break;
+        }
+        case "measure": {
+          const a = d.points[0], b = d.points[1];
+          const color = b.price >= a.price ? th.up : th.down;
+          const x = Math.min(pts[0].x, pts[1].x), y = Math.min(pts[0].y, pts[1].y);
+          const w = Math.abs(pts[1].x - pts[0].x), h = Math.abs(pts[1].y - pts[0].y);
+          ctx.fillStyle = withAlpha(color, 0.12);
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = color;
+          ctx.setLineDash([]);
+          // arrows along the move
+          const mx = (pts[0].x + pts[1].x) / 2, my = (pts[0].y + pts[1].y) / 2;
+          ctx.moveTo(mx, pts[0].y); ctx.lineTo(mx, pts[1].y);
+          ctx.moveTo(pts[0].x, my); ctx.lineTo(pts[1].x, my);
+          ctx.stroke();
+          ctx.beginPath();
+          const diff = b.price - a.price, pct = a.price ? (diff / a.price) * 100 : 0;
+          const bars = Math.round(Math.abs(b.time - a.time) / this.tf.ms);
+          const sign = diff >= 0 ? "+" : "−";
+          const text = `${sign}${this.fmtPrice(Math.abs(diff), dec)} (${sign}${Math.abs(pct).toFixed(2)}%) · ${bars} · ${formatDuration(Math.abs(b.time - a.time))}`;
+          const below = pts[1].y >= pts[0].y;
+          pill(ctx, text, mx, below ? y + h + 14 : y - 14, { bg: color, fg: th.overlayText, font: this.font(0), align: "center", within: [4, pw - 4] });
+          break;
+        }
         case "fib": {
           const left = Math.min(pts[0].x, pts[1].x);
           ctx.setLineDash([3, 4]);
@@ -1405,6 +1717,7 @@ export class Chart {
     const tag = (text: string, x: number, y: number, color: string, align: "left" | "center") =>
       pill(ctx, text, x, y, { bg: color, fg: this.theme.overlayText, font: this.font(0), align, width: align === "left" ? this.axisW - 8 : 0 });
     for (const d of this.drawingList) {
+      if (d.hidden) continue;
       const sel = d.id === this.selectedId;
       if (d.tool === "horizontal" || sel) {
         for (const q of d.tool === "vertical" ? [] : d.points) {
@@ -1527,7 +1840,7 @@ export class Chart {
           if (e.pointerType !== "mouse") this.pointer = this.pointer ? null : p; // tap toggles the crosshair on touch
         }
         // snap back to following when dragged to (or past) the live edge
-        if (this.drag.moved && this.rightTime >= this.liveTime() + this.plotW() * this.opts.timeScale.rightPadding * this.msPerPx) this.setFollowing(true);
+        if (this.drag.moved && this.rightTime >= this.liveTime() + this.plotW() * this.rightPad() * this.msPerPx) this.setFollowing(true);
         this.drag = null;
       }
       c.style.cursor = "crosshair";
@@ -1592,6 +1905,20 @@ export class Chart {
 
 function crisp(v: number): number { return Math.round(v) + 0.5; }
 
+const ALERT_COLOR = "#f5a524";
+
+/** "45s", "12m", "3h 20m", "2d 4h". */
+function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
+}
+
 /** Applies per-indicator style overrides to computed output. */
 function styled(out: IndicatorOutput, st: IndicatorStyle): IndicatorOutput {
   if (!st.colors && st.width === undefined && !st.upColor && !st.downColor && !st.bandColor && !st.levels) return out;
@@ -1631,12 +1958,12 @@ function roundedRightRect(ctx: CanvasRenderingContext2D, x: number, y: number, w
 
 function pill(
   ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
-  o: { bg: string; fg: string; font: string; align: "left" | "center"; width?: number; border?: string; within?: [number, number] },
+  o: { bg: string; fg: string; font: string; align: "left" | "center" | "right"; width?: number; border?: string; within?: [number, number] },
 ): void {
   ctx.font = o.font;
   const tw = ctx.measureText(text).width;
   const w = Math.max(o.width ?? 0, tw + 12), h = 18;
-  let left = o.align === "center" ? x - w / 2 : x;
+  let left = o.align === "center" ? x - w / 2 : o.align === "right" ? x - w : x;
   // keep the label inside the given span (e.g. the plot) instead of letting it be cut off
   if (o.within) left = Math.min(Math.max(left, o.within[0]), o.within[1] - w);
   ctx.fillStyle = o.bg;

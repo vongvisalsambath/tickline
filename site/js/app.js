@@ -61,15 +61,18 @@ async function start() {
   chart.setAttribute("symbol", market.label);
   chart.setAttribute("timeframe", tf);
   setStatus("connecting");
+  chart.setLoading(true);
   let candles;
   try {
     candles = await loadHistory(market, tf);
   } catch {
+    chart.setLoading(false);
     if (market.live) { market = MARKETS.find((m) => !m.live); marketSel.value = market.id; setStatus("offline"); return; }
     throw new Error("No data");
   }
   if (token !== loadToken) return;
   chart.setData(candles);
+  chart.setLoading(false);
   lastPrice = candles.at(-1)?.close ?? NaN;
   stop = subscribe(market, (t) => { lastPrice = t.price; chart.tick(t); }, setStatus);
 }
@@ -99,7 +102,20 @@ const positions = createPositions(chart, {
     el.style.color = expected >= 0 ? "var(--up)" : "var(--down)";
   },
 });
-document.querySelectorAll(".pos").forEach((b) => (b.onclick = () => Number.isFinite(lastPrice) && positions.place(b.dataset.side, 10, 60_000)));
+document.querySelectorAll(".pos[data-side]").forEach((b) => (b.onclick = () => Number.isFinite(lastPrice) && positions.place(b.dataset.side, 10, 60_000)));
+
+// price alert: a line a little above the live price; the chart fires tl-alert when it's crossed
+$("#alert-btn").onclick = () => {
+  if (!Number.isFinite(lastPrice)) return;
+  chart.addAlert({ price: lastPrice * 1.0005, label: "Alert" });
+  $("#pl").textContent = "Alert set";
+  $("#pl").style.color = "";
+};
+chart.addEventListener("tl-alert", (e) => {
+  const el = $("#pl");
+  el.textContent = `Alert hit: price went ${e.detail.direction} through ${e.detail.price.toFixed(2)}`;
+  el.style.color = "var(--accent-ink)";
+});
 
 // ------------------------------------------------------------------ theme
 const themeBtn = $("[data-theme-toggle]");

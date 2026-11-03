@@ -1,0 +1,40 @@
+# Publishes tickline and tickline-mcp to npm when a version tag (v1.2.3) is pushed.
+# Uses npm trusted publishing: no token is stored; GitHub proves to npm which workflow is publishing,
+# and npm adds a provenance statement to each release. Set it up once per package on npmjs.com
+# (Settings → Trusted publishing → GitHub Actions: vongvisalsambath / tickline / release.yml).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: npm 11.5.1 or later (needed for trusted publishing)
+        run: npm install -g npm@latest
+      - run: npm ci
+      - name: Tag matches both package versions
+        run: |
+          v="v$(node -p "require('./package.json').version")"
+          m="v$(node -p "require('./mcp/package.json').version")"
+          echo "tag $GITHUB_REF_NAME, tickline $v, tickline-mcp $m"
+          test "$v" = "$GITHUB_REF_NAME" && test "$m" = "$GITHUB_REF_NAME"
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Publish tickline
+        run: npm publish --access public
+      - name: Publish tickline-mcp
+        working-directory: mcp
+        run: npm publish --access public

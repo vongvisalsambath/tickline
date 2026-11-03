@@ -1,6 +1,6 @@
 // Drawing tools: the shapes, how many points each needs, and screen-space hit testing.
 
-export type DrawingTool = "line" | "trend" | "horizontal" | "vertical" | "fib";
+export type DrawingTool = "line" | "trend" | "horizontal" | "vertical" | "rect" | "fib" | "measure";
 
 export interface DrawingPoint { time: number; price: number }
 
@@ -12,13 +12,17 @@ export interface Drawing {
   color: string;
   width?: number;
   style?: "solid" | "dashed" | "dotted";
+  /** Can't be moved or deleted by the user. */
   locked?: boolean;
+  /** Kept but not drawn. */
+  hidden?: boolean;
 }
 
-export const POINTS_NEEDED: Record<DrawingTool, number> = { line: 2, trend: 2, horizontal: 1, vertical: 1, fib: 2 };
+export const POINTS_NEEDED: Record<DrawingTool, number> = { line: 2, trend: 2, horizontal: 1, vertical: 1, rect: 2, fib: 2, measure: 2 };
 
 export const TOOL_NAMES: Record<DrawingTool, string> = {
-  line: "Line", trend: "Trend line", horizontal: "Horizontal line", vertical: "Vertical line", fib: "Fibonacci retracement",
+  line: "Line", trend: "Trend line", horizontal: "Horizontal line", vertical: "Vertical line", rect: "Rectangle",
+  fib: "Fibonacci retracement", measure: "Measure",
 };
 
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -63,6 +67,14 @@ export function distToDrawing(tool: DrawingTool, pts: XY[], p: XY, right: number
     case "vertical": return Math.abs(p.x - pts[0].x);
     case "line": return distToSegment(p, pts[0], pts[1]);
     case "trend": return distToSegment(p, pts[0], rayEnd(pts[0], pts[1], right, bottom));
+    case "rect":
+    case "measure": {
+      // inside counts as on it, so boxes are easy to grab
+      const x1 = Math.min(pts[0].x, pts[1].x), x2 = Math.max(pts[0].x, pts[1].x);
+      const y1 = Math.min(pts[0].y, pts[1].y), y2 = Math.max(pts[0].y, pts[1].y);
+      const dx = Math.max(x1 - p.x, 0, p.x - x2), dy = Math.max(y1 - p.y, 0, p.y - y2);
+      return Math.hypot(dx, dy);
+    }
     case "fib": {
       const left = Math.min(pts[0].x, pts[1].x);
       let d = distToSegment(p, pts[0], pts[1]);

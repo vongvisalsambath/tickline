@@ -89,6 +89,39 @@ export interface ZoneOptions {
   label?: string;
 }
 
+/** A price alert: fires the "alert" event when the price crosses it. */
+export interface AlertOptions {
+  price: number;
+  color?: string;
+  /** Text by the line (default: the "alert" label). */
+  label?: string;
+  /** Remove the alert after it fires once (default true). */
+  once?: boolean;
+}
+
+/** What the "alert" event reports. */
+export interface AlertEvent {
+  id: string;
+  price: number;
+  /** "up" when the price rose through the alert, "down" when it fell through it. */
+  direction: "up" | "down";
+  /** Time of the trade or candle that crossed it (ms). */
+  time: number;
+  label?: string;
+}
+
+/** Options for chart images. */
+export interface ImageOptions {
+  /** "image/png" (default), "image/jpeg" or "image/webp". */
+  type?: "image/png" | "image/jpeg" | "image/webp";
+  /** 0–1 for JPEG and WebP. */
+  quality?: number;
+  /** Pixels per CSS pixel; 2 gives a sharp image for slides and retina screens (default: the screen's). */
+  pixelRatio?: number;
+  /** Include the crosshair if the pointer is over the chart (default false). */
+  crosshair?: boolean;
+}
+
 export interface CrosshairInfo {
   time: number;
   price: number;

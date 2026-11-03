@@ -4,27 +4,40 @@ import { DARK, LIGHT, resolveTheme } from "./theme";
 import { parseIndicatorList } from "./indicators";
 import { POINTS_NEEDED, type Drawing, type DrawingTool } from "./drawings";
 import { applyOptions, defaultOptions, mergeDeep, type ChartOptions, type ResolvedOptions, type ThemeInput } from "./options";
-import type { Candle, ChartType, MarkerOptions, PriceLineOptions, Theme, Tick, TimeLineOptions, ZoneOptions } from "./types";
+import type { AlertOptions, Candle, ChartType, ImageOptions, MarkerOptions, PriceLineOptions, Theme, Tick, TimeLineOptions, VisibleRange, ZoneOptions } from "./types";
+import type { ChartState } from "./chart";
 
 /** Attributes and the setting each one controls. Removing an attribute restores that setting's default. */
 const ATTRS = [
   "type", "timeframe", "theme", "symbol", "precision", "timezone", "locale", "fps", "font-size",
   "countdown", "price-line", "right-padding", "min-visible-candles", "emphasis-digits", "animate",
-  "crosshair", "grid", "legend", "controls", "drawing-tools", "indicators", "options",
+  "crosshair", "grid", "legend", "controls", "drawing-tools", "indicators", "options", "live-position", "watermark",
 ] as const;
 type Attr = (typeof ATTRS)[number];
 
 const STYLE = `
 :host { display: block; position: relative; height: 420px; min-height: 160px; contain: content; }
+:host([fullscreen]) { position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important; height: 100dvh !important;
+  max-width: none !important; max-height: none !important; min-height: 0; margin: 0 !important; border-radius: 0 !important; z-index: 2147483000;
+  background: var(--tl-background, var(--_bg)); box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+:host(:fullscreen) { width: 100%; height: 100%; }
 .wrap { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
-.controls { position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); display: flex; gap: 4px;
+:host([fullscreen]) .wrap { inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.controls { position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); display: flex; gap: 4px; align-items: center;
   opacity: 0; transition: opacity .2s; pointer-events: none; }
 .wrap:hover .controls, .controls:focus-within { opacity: 1; pointer-events: auto; }
+/* touch screens have no hover: tapping the chart shows the buttons */
+@media (hover: none) { .wrap:focus-within .controls { opacity: 1; pointer-events: auto; } }
+.controls .sep { width: 1px; height: 18px; margin: 0 3px; background: var(--tl-axis-line, var(--_line)); }
 button { font: 600 13px/1 var(--tl-font, system-ui, sans-serif); min-width: 30px; height: 28px; padding: 0 9px; border-radius: 7px; cursor: pointer;
-  color: var(--tl-text-strong, var(--_fg)); background: color-mix(in srgb, var(--tl-background, var(--_bg)) 80%, transparent);
-  border: 1px solid var(--tl-axis-line, var(--_line)); backdrop-filter: blur(6px); }
+  color: var(--tl-text-strong, var(--_fg)); background: var(--_bg); background: color-mix(in srgb, var(--tl-background, var(--_bg)) 80%, transparent);
+  border: 1px solid var(--tl-axis-line, var(--_line)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  display: inline-grid; place-items: center; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 button:hover { border-color: var(--tl-accent, var(--_accent)); }
 button:focus-visible { outline: 2px solid var(--tl-accent, var(--_accent)); outline-offset: 1px; }
+button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.icon { width: 30px; min-width: 0; padding: 0; }
 .live { position: absolute; right: 76px; bottom: 36px; display: none; color: var(--tl-accent-text, #fff);
   background: var(--tl-accent, var(--_accent)); border-color: transparent; }
 .live.show { display: inline-flex; align-items: center; gap: 6px; }
@@ -33,28 +46,44 @@ button:focus-visible { outline: 2px solid var(--tl-accent, var(--_accent)); outl
   opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; white-space: nowrap; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .tools { position: absolute; left: 8px; top: 58px; display: flex; flex-direction: column; gap: 4px; }
-.tools button { width: 30px; min-width: 0; padding: 0; display: grid; place-items: center; opacity: .8; }
-.tools button:hover, .tools button[aria-pressed="true"] { opacity: 1; }
+.tools .list { display: contents; }
+.tools button { opacity: .8; }
+.tools button:hover, .tools button[aria-pressed="true"], .tools button[aria-expanded="true"] { opacity: 1; }
 .tools button[aria-pressed="true"] { color: var(--tl-accent-text, #fff); background: var(--tl-accent, var(--_accent)); border-color: transparent; }
-.tools svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.tools .toggle { display: none; }
 .selbar { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); display: none; gap: 6px; align-items: center; padding: 5px 6px;
-  border-radius: 9px; background: color-mix(in srgb, var(--tl-background, var(--_bg)) 88%, transparent);
-  border: 1px solid var(--tl-axis-line, var(--_line)); backdrop-filter: blur(6px); }
+  border-radius: 9px; background: var(--_bg); background: color-mix(in srgb, var(--tl-background, var(--_bg)) 88%, transparent);
+  border: 1px solid var(--tl-axis-line, var(--_line)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: center; }
 .selbar.show { display: flex; }
 .swatch { width: 18px; min-width: 0; height: 18px; padding: 0; border-radius: 50%; border: 2px solid transparent; }
 .swatch[aria-pressed="true"] { border-color: var(--tl-text-strong, var(--_fg)); }
-.selbar .del { height: 24px; font-weight: 600; font-size: 12px; }
+.selbar .act { height: 24px; font-weight: 600; font-size: 12px; }
+.selbar .act[aria-pressed="true"] { color: var(--tl-accent-text, #fff); background: var(--tl-accent, var(--_accent)); border-color: transparent; }
 .off { display: none !important; }
-@media (max-width: 420px) { .tools { top: auto; bottom: 36px; flex-direction: row; } }
+/* small charts (narrow or short): the drawing tools fold into one button, the Live button sits above the zoom buttons */
+.compact .tools .toggle { display: inline-grid; }
+.compact .tools:not(.open) .list { display: none; }
+.compact .tools.open .list { display: flex; flex-direction: column; gap: 4px; }
+.compact .live { right: 50%; transform: translateX(50%); bottom: 72px; }
+.compact.short .tools { top: 34px; }
 @media (prefers-reduced-motion: reduce) { .controls, .toast { transition: none; } }
 `;
 
 const ICONS: Record<DrawingTool, string> = {
+  rect: '<rect x="2.5" y="4" width="11" height="8" rx="1"/>',
+  measure: '<path d="M8 2v12M2 8h12M5 5l3-3 3 3M5 11l3 3 3-3"/>',
   line: '<path d="M3 13L13 3"/><circle cx="3" cy="13" r="1.4"/><circle cx="13" cy="3" r="1.4"/>',
   trend: '<path d="M2 14L14 4"/><circle cx="5" cy="11.5" r="1.4"/>',
   horizontal: '<path d="M2 8h12"/><circle cx="8" cy="8" r="1.4"/>',
   vertical: '<path d="M8 2v12"/><circle cx="8" cy="8" r="1.4"/>',
   fib: '<path d="M2 3h12M2 6.5h12M2 9.5h12M2 13h12" stroke-dasharray="0"/><path d="M3 13L13 3" stroke-dasharray="1.5 2"/>',
+};
+
+const UI_ICONS = {
+  image: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7M5 6.5l3 3 3-3M2.5 11v2.5h11V11"/></svg>',
+  expand: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>',
+  shrink: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>',
+  pencil: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12z"/><path d="M9.5 4l2.5 2.5"/></svg>',
 };
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -85,9 +114,18 @@ function attributeOptions(name: Attr, v: string | null): ChartOptions {
       return { grid: { horizontal: ["both", "true", "horizontal", ""].includes(g), vertical: ["both", "true", "vertical", ""].includes(g) } };
     }
     case "legend": return { legend: { visible: bool(v, true) } };
+    case "watermark": return { watermark: { text: v ?? "" } };
+    case "live-position": {
+      // "center", "0.5", "0.5 0.5", "0.8 0.3" (x then y); empty or removed for the default
+      const t = (v ?? "").trim().toLowerCase();
+      if (!t || t === "auto" || t === "none") return { livePosition: { x: null, y: null } };
+      if (t === "center" || t === "centre") return { livePosition: { x: 0.5, y: 0.5 } };
+      const [x, y] = t.split(/[\s,]+/).map((n) => num(n) ?? null);
+      return { livePosition: { x: x ?? null, y: y ?? null } };
+    }
     case "controls": {
       const on = v === null || v.trim().toLowerCase() !== "none";
-      return { ui: { zoomButtons: on, liveButton: on, drawingToolbar: on, drawingBar: on } };
+      return { ui: { zoomButtons: on, liveButton: on, drawingToolbar: on, drawingBar: on, screenshotButton: on, fullscreenButton: on } };
     }
     case "drawing-tools": {
       if (v === null || v.trim() === "" || /^(true|all)$/i.test(v.trim())) return { ui: { drawingToolbar: true, drawingTools: d.ui.drawingTools } };
@@ -133,11 +171,17 @@ export class TradeChartElement extends HTMLElement {
         <button type="button" data-a="out">−</button>
         <button type="button" data-a="live">⌖</button>
         <button type="button" data-a="in">+</button>
+        <span class="sep" aria-hidden="true"></span>
+        <button type="button" class="icon" data-a="image">${UI_ICONS.image}</button>
+        <button type="button" class="icon" data-a="fullscreen">${UI_ICONS.expand}</button>
       </div>
       <button type="button" class="live" part="live-button" data-a="live"></button>
-      <div class="tools" part="drawing-tools" role="toolbar"></div>
+      <div class="tools" part="drawing-tools" role="toolbar">
+        <button type="button" class="icon toggle" aria-expanded="false">${UI_ICONS.pencil}</button><div class="list"></div></div>
       <div class="selbar" part="drawing-bar" role="toolbar"><span class="swatches" style="display:contents"></span>
-        <button type="button" class="del" data-del></button></div>
+        <button type="button" class="act" data-lock aria-pressed="false"></button>
+        <button type="button" class="act" data-dup></button>
+        <button type="button" class="act" data-del></button></div>
       <div class="toast" part="toast" role="status" aria-live="polite"></div>`;
     this.wrap = this.root.querySelector(".wrap")!;
     this.wrap.append(...["controls", "live", "toast", "tools", "selbar"].map((c) => this.root.querySelector("." + c)!));
@@ -153,12 +197,13 @@ export class TradeChartElement extends HTMLElement {
     this.early = {};
     this._chart = new Chart(this.wrap, { ...initial, theme: undefined });
     this.wrap.prepend(this._chart.canvas);
+    this.watchSize();
     this.applyTheme();
     this.bindUi();
 
     const forward = <K extends keyof ChartEvents>(type: K) =>
       this._chart!.on(type, (detail) => this.dispatchEvent(new CustomEvent(`tl-${type}`, { detail, bubbles: true, composed: true })));
-    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange", "drawingschange", "drawingselect", "toolchange"] as const).forEach(forward);
+    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange", "drawingschange", "drawingselect", "toolchange", "alert"] as const).forEach(forward);
     this.applyIndicatorAttribute();
     this.applyUi();
 
@@ -168,7 +213,13 @@ export class TradeChartElement extends HTMLElement {
 
   disconnectedCallback(): void {
     // Keep the chart if the element is just being moved in the DOM.
-    queueMicrotask(() => { if (!this.isConnected) { this._chart?.destroy(); this._chart = null; } });
+    queueMicrotask(() => {
+      if (this.isConnected) return;
+      if (this.isFullscreen) this.exitFullscreen();
+      this.sizeObs?.disconnect();
+      this._chart?.destroy();
+      this._chart = null;
+    });
   }
 
   attributeChangedCallback(name: string, old: string | null, value: string | null): void {
@@ -222,6 +273,9 @@ export class TradeChartElement extends HTMLElement {
   addPriceLine(o: PriceLineOptions): string { return this.runId((c) => c.addPriceLine(o)); }
   addTimeLine(o: TimeLineOptions): string { return this.runId((c) => c.addTimeLine(o)); }
   addZone(o: ZoneOptions): string { return this.runId((c) => c.addZone(o)); }
+  /** A price alert: fires the tl-alert event when the price crosses it. Returns its id (remove with removeOverlay). */
+  addAlert(o: AlertOptions): string { return this.runId((c) => c.addAlert(o)); }
+  get alerts() { return this._chart?.alerts ?? []; }
   updateOverlay(id: string, patch: Parameters<Chart["updateOverlay"]>[1]): void { this.run((c) => c.updateOverlay(id, patch)); }
   removeOverlay(id: string): void { this.run((c) => c.removeOverlay(id)); }
   clearOverlays(): void { this.run((c) => c.clearOverlays()); }
@@ -240,11 +294,102 @@ export class TradeChartElement extends HTMLElement {
   addDrawing(d: Parameters<Chart["addDrawing"]>[0]): string { return this.runId((c) => c.addDrawing(d)); }
   updateDrawing(id: string, patch: Parameters<Chart["updateDrawing"]>[1]): void { this.run((c) => c.updateDrawing(id, patch)); }
   removeDrawing(id: string): void { this.run((c) => c.removeDrawing(id)); }
+  duplicateDrawing(id: string): string | null { return this._chart?.duplicateDrawing(id) ?? null; }
   clearDrawings(): void { this.run((c) => c.clearDrawings()); }
   zoomIn(): void { this._chart?.zoomIn(); }
   zoomOut(): void { this._chart?.zoomOut(); }
   goLive(): void { this._chart?.goLive(); }
   fitContent(): void { this._chart?.fitContent(); }
+  /** The time range in view (ms). */
+  get visibleRange(): VisibleRange { return this._chart?.visibleRange ?? { from: 0, to: 0 }; }
+  /** Shows this time range; with { follow: true } keeps following the live price at this zoom. */
+  setVisibleRange(range: VisibleRange, opts?: { follow?: boolean }): void { this.run((c) => c.setVisibleRange(range, opts)); }
+  /** Scrolls so `time` sits at `position` across the chart (0 left, 0.5 middle, 1 right). */
+  scrollToTime(time: number, position?: number): void { this.run((c) => c.scrollToTime(time, position)); }
+  /** Shows a "Loading…" placeholder, or hides it. */
+  setLoading(on: boolean): void { this.run((c) => c.setLoading(on)); }
+  /** The chart as an image Blob (PNG by default). */
+  toBlob(o?: ImageOptions): Promise<Blob> { return this._chart ? this._chart.toBlob(o) : Promise.reject(new Error("<trade-chart> isn't in the page.")); }
+  /** The chart as a data: URL (PNG by default). */
+  toDataURL(o?: ImageOptions): string { return this._chart?.toDataURL(o) ?? ""; }
+  /** Downloads the chart as an image. */
+  downloadImage(filename?: string, o?: ImageOptions): Promise<void> { return this._chart ? this._chart.downloadImage(filename, o) : Promise.resolve(); }
+  /** The user's chart (type, indicators, drawings, alerts, view) as JSON-safe data. */
+  getState(): ChartState | null { return this._chart?.getState() ?? null; }
+  /** Restores what getState() returned. */
+  setState(state: Partial<ChartState>): void { this.run((c) => c.setState(state)); }
+
+  private sizeObs: ResizeObserver | null = null;
+  /** Marks small charts so the controls take less room. */
+  private watchSize(): void {
+    const update = () => {
+      const r = this.wrap.getBoundingClientRect();
+      if (!r.width) return;
+      this.wrap.classList.toggle("compact", r.width < 520 || r.height < 420);
+      this.wrap.classList.toggle("short", r.height < 420);
+    };
+    update();
+    if (typeof ResizeObserver !== "undefined") { this.sizeObs = new ResizeObserver(update); this.sizeObs.observe(this.wrap); }
+    else window.addEventListener("resize", update);
+  }
+
+  // ---------------------------------------------------------------- full screen
+
+  private fakeFullscreen = false;
+  private savedOverflow = "";
+  /** True while the chart fills the screen. */
+  get isFullscreen(): boolean { return this.hasAttribute("fullscreen"); }
+
+  /**
+   * Fills the screen with the chart. Uses the browser's full-screen mode where it's allowed, and
+   * otherwise (e.g. iPhone Safari) covers the page. Fires tl-fullscreenchange.
+   */
+  async enterFullscreen(): Promise<void> {
+    if (this.isFullscreen) return;
+    const el = this as Omit<HTMLElement, "requestFullscreen"> & { requestFullscreen?: HTMLElement["requestFullscreen"]; webkitRequestFullscreen?: () => void };
+    const doc = document as Document & { webkitFullscreenEnabled?: boolean };
+    const native = el.requestFullscreen ? doc.fullscreenEnabled : el.webkitRequestFullscreen ? doc.webkitFullscreenEnabled : false;
+    if (native) {
+      try {
+        this.toggleAttribute("fullscreen", true);
+        if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: "hide" }); else el.webkitRequestFullscreen!();
+        this.fakeFullscreen = false;
+        this.fullscreenChanged();
+        return;
+      } catch { /* not allowed here: fall back to covering the page */ }
+    }
+    this.fakeFullscreen = true;
+    this.savedOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    this.toggleAttribute("fullscreen", true);
+    this.fullscreenChanged();
+  }
+
+  async exitFullscreen(): Promise<void> {
+    if (!this.isFullscreen) return;
+    const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void };
+    if (!this.fakeFullscreen && (document.fullscreenElement === this || doc.webkitFullscreenElement === this)) {
+      try { if (document.exitFullscreen) await document.exitFullscreen(); else doc.webkitExitFullscreen?.(); } catch { /* already left */ }
+    }
+    if (this.fakeFullscreen) document.documentElement.style.overflow = this.savedOverflow;
+    this.fakeFullscreen = false;
+    this.toggleAttribute("fullscreen", false);
+    this.fullscreenChanged();
+  }
+
+  toggleFullscreen(): Promise<void> { return this.isFullscreen ? this.exitFullscreen() : this.enterFullscreen(); }
+
+  private fullscreenChanged(): void {
+    const on = this.isFullscreen;
+    const b = this.root?.querySelector<HTMLElement>('[data-a="fullscreen"]');
+    if (b && this._chart) {
+      const L = this._chart.options.labels;
+      b.innerHTML = on ? UI_ICONS.shrink : UI_ICONS.expand;
+      b.setAttribute("aria-label", on ? L.exitFullscreen : L.fullscreen);
+      b.title = `${on ? L.exitFullscreen : L.fullscreen} (F)`;
+    }
+    this.dispatchEvent(new CustomEvent("tl-fullscreenchange", { detail: { fullscreen: on }, bubbles: true, composed: true }));
+  }
 
   private run(f: (c: Chart) => void): void {
     if (this._chart) f(this._chart); else this.pending.push(() => f(this._chart!));
@@ -312,19 +457,43 @@ export class TradeChartElement extends HTMLElement {
     root.querySelector(".controls")!.addEventListener("click", (e) => {
       const a = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-a]")?.dataset.a;
       if (a === "in") c.zoomIn(); else if (a === "out") c.zoomOut(); else if (a === "live") c.goLive();
+      else if (a === "image") void c.downloadImage();
+      else if (a === "fullscreen") void this.toggleFullscreen();
+    });
+    // leaving the browser's full screen with Esc or a gesture
+    const onNativeChange = () => {
+      const doc = document as Document & { webkitFullscreenElement?: Element };
+      const current = document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+      if (this.isFullscreen && !this.fakeFullscreen && current !== this) { this.toggleAttribute("fullscreen", false); this.fullscreenChanged(); }
+    };
+    document.addEventListener("fullscreenchange", onNativeChange);
+    document.addEventListener("webkitfullscreenchange", onNativeChange);
+    // F toggles full screen; Esc leaves the page-covering mode
+    this.addEventListener("keydown", (e) => {
+      if (!c.options.interaction.keyboard || e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e.key === "f" || e.key === "F") && c.options.ui.fullscreenButton) { e.preventDefault(); void this.toggleFullscreen(); }
+      else if (e.key === "Escape" && this.fakeFullscreen && !c.drawingTool && !c.selectedDrawing) void this.exitFullscreen();
     });
     this.liveBtn.addEventListener("click", () => c.goLive());
-    root.querySelector(".tools")!.addEventListener("click", (e) => {
-      const t = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-tool]")?.dataset.tool as DrawingTool | undefined;
+    const tools = root.querySelector<HTMLElement>(".tools")!;
+    tools.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      const toggle = target.closest<HTMLButtonElement>(".toggle");
+      if (toggle) { const open = tools.classList.toggle("open"); toggle.setAttribute("aria-expanded", String(open)); return; }
+      const t = target.closest<HTMLButtonElement>("[data-tool]")?.dataset.tool as DrawingTool | undefined;
       if (!t) return;
       c.setDrawingTool(c.drawingTool === t ? null : t);
+      tools.classList.remove("open");
+      tools.querySelector(".toggle")!.setAttribute("aria-expanded", "false");
       c.canvas.focus({ preventScroll: true });
     });
     root.querySelector(".selbar")!.addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!b) return;
       const d = c.selectedDrawing;
-      if (b.hasAttribute("data-del")) { if (d) c.removeDrawing(d.id); return; }
+      if (b.hasAttribute("data-del")) { if (d && !d.locked) c.removeDrawing(d.id); return; }
+      if (b.hasAttribute("data-dup")) { if (d) c.duplicateDrawing(d.id); return; }
+      if (b.hasAttribute("data-lock")) { if (d) { c.updateDrawing(d.id, { locked: !d.locked }); this.markSelection(); } return; }
       const color = b.dataset.color;
       if (!color) return;
       c.drawingColor = color;
@@ -335,12 +504,24 @@ export class TradeChartElement extends HTMLElement {
     c.on("drawingselect", (d) => {
       root.querySelector(".selbar")!.classList.toggle("show", !!d && c.options.ui.drawingBar);
       this.markSwatches(d?.color ?? null);
+      this.markSelection();
     });
     c.on("followchange", ({ following }) => { this.following = following; this.liveBtn.classList.toggle("show", !following && c.options.ui.liveButton); });
     c.on("zoomlimit", ({ minCandles }) => {
       const o = c.options;
       if (o.ui.zoomLimitMessage) this.showToast(o.labels.zoomLimit.replace("{n}", String(minCandles)));
     });
+  }
+
+  /** Lock button state and Delete availability for the selected drawing. */
+  private markSelection(): void {
+    const c = this._chart;
+    if (!c) return;
+    const d = c.selectedDrawing, L = c.options.labels;
+    const lock = this.root.querySelector<HTMLButtonElement>("[data-lock]")!;
+    lock.textContent = d?.locked ? L.unlock : L.lock;
+    lock.setAttribute("aria-pressed", String(!!d?.locked));
+    this.root.querySelector<HTMLButtonElement>("[data-del]")!.disabled = !!d?.locked;
   }
 
   private markSwatches(color: string | null): void {
@@ -354,7 +535,6 @@ export class TradeChartElement extends HTMLElement {
     const { ui, labels: L, drawings } = c.options;
     const root = this.root;
     const controls = root.querySelector<HTMLElement>(".controls")!;
-    controls.classList.toggle("off", !ui.zoomButtons);
     controls.setAttribute("aria-label", `${L.zoomIn} / ${L.zoomOut}`);
     const label = (sel: string, text: string, key = "") => {
       const b = root.querySelector<HTMLElement>(sel)!;
@@ -364,6 +544,14 @@ export class TradeChartElement extends HTMLElement {
     label('.controls [data-a="out"]', L.zoomOut, "−");
     label('.controls [data-a="live"]', L.backToLive, "End");
     label('.controls [data-a="in"]', L.zoomIn, "+");
+    label('.controls [data-a="image"]', L.screenshot);
+    root.querySelector('.controls [data-a="image"]')!.classList.toggle("off", !ui.screenshotButton);
+    root.querySelector('.controls [data-a="fullscreen"]')!.classList.toggle("off", !ui.fullscreenButton);
+    root.querySelector(".controls .sep")!.classList.toggle("off", !ui.screenshotButton && !ui.fullscreenButton);
+    label('.controls [data-a="fullscreen"]', this.isFullscreen ? L.exitFullscreen : L.fullscreen, "F");
+    // the bar is shown when any of its buttons are
+    controls.classList.toggle("off", !ui.zoomButtons && !ui.screenshotButton && !ui.fullscreenButton);
+    controls.querySelectorAll<HTMLElement>('[data-a="out"], [data-a="live"], [data-a="in"]').forEach((b) => b.classList.toggle("off", !ui.zoomButtons));
     this.liveBtn.textContent = L.live;
     this.liveBtn.setAttribute("aria-label", L.backToLive);
     this.liveBtn.classList.toggle("show", !this.following && ui.liveButton);
@@ -372,8 +560,12 @@ export class TradeChartElement extends HTMLElement {
     const list = ui.drawingTools.filter((t) => t in ICONS);
     tools.classList.toggle("off", !ui.drawingToolbar || list.length === 0);
     tools.setAttribute("aria-label", L.drawingTools);
+    const toggle = tools.querySelector<HTMLElement>(".toggle")!;
+    toggle.setAttribute("aria-label", L.drawingTools);
+    toggle.title = L.drawingTools;
     const html = list.map((t) => `<button type="button" data-tool="${t}" aria-pressed="${c.drawingTool === t}" aria-label="${esc(L.tools[t])}" title="${esc(L.tools[t])}"><svg viewBox="0 0 16 16" aria-hidden="true">${ICONS[t]}</svg></button>`).join("");
-    if (tools.innerHTML !== html) tools.innerHTML = html; // rebuild only when the tools or their names change
+    const listEl = tools.querySelector<HTMLElement>(".list")!;
+    if (listEl.innerHTML !== html) listEl.innerHTML = html; // rebuild only when the tools or their names change
 
     const bar = root.querySelector<HTMLElement>(".selbar")!;
     bar.setAttribute("aria-label", L.selectedDrawing);
@@ -387,6 +579,8 @@ export class TradeChartElement extends HTMLElement {
     del.textContent = L.delete;
     del.setAttribute("aria-label", L.deleteDrawing);
     del.title = `${L.deleteDrawing} (Del)`;
+    root.querySelector<HTMLElement>("[data-dup]")!.textContent = L.duplicate;
+    this.markSelection();
   }
 
   private showToast(text: string): void {

@@ -1,0 +1,35 @@
+{
+  "name": "tickline-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Tickline: lets AI coding assistants look up the docs and settings, validate chart options and write integration code.",
+  "type": "module",
+  "bin": {
+    "tickline-mcp": "dist/tickline-mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "tickline",
+    "trading-chart",
+    "claude",
+    "ai"
+  ],
+  "author": "Vong Visalsambath",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vongvisalsambath/tickline.git",
+    "directory": "mcp"
+  },
+  "homepage": "https://tickline-chart.vercel.app",
+  "scripts": {
+    "prepublishOnly": "node ../scripts/build-mcp.mjs"
+  }
+}

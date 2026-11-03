@@ -37,6 +37,8 @@ export interface SeriesOptions {
   wicks: boolean;
   /** Line width for line and area charts in px (default 2). */
   lineWidth: number;
+  /** Labels at the highest high and lowest low in view (default false). */
+  highLowLabels: boolean;
 }
 
 export interface GridOptions {
@@ -105,6 +107,29 @@ export interface LastPriceOptions {
   pulse: boolean;
   /** Time left in the current candle next to the live price (default true). */
   countdown: boolean;
+  /** Count down to the candle's close ("down", default) or up from its open ("up"). */
+  countdownDirection: "down" | "up";
+}
+
+/**
+ * Where the live price sits on screen while the chart follows it. Each is a share from 0 to 1, or null.
+ * `{ x: 0.5, y: 0.5 }` keeps the live price in the centre; `{ x: 0.8 }` keeps it 80% across.
+ */
+export interface LivePositionOptions {
+  /** Across the plot, from the left (0) to the right edge (1). null uses `timeScale.rightPadding` (default null). */
+  x: number | null;
+  /** Down the price pane, from the top (0) to the bottom (1). null fits the scale to the prices in view (default null). */
+  y: number | null;
+}
+
+/** Large faint text behind the candles, such as the symbol. */
+export interface WatermarkOptions {
+  /** The text; "" for none (default ""). "{symbol}" and "{timeframe}" are replaced. */
+  text: string;
+  /** Colour; "" uses the theme's text colour, faded (default ""). */
+  color: string;
+  /** Font size in px; 0 sizes it to the chart (default 0). */
+  fontSize: number;
 }
 
 export interface InteractionOptions {
@@ -185,6 +210,15 @@ export interface Labels {
   deleteDrawing: string;
   delete: string;
   color: string;
+  screenshot: string;
+  fullscreen: string;
+  exitFullscreen: string;
+  loading: string;
+  lock: string;
+  unlock: string;
+  duplicate: string;
+  hide: string;
+  alert: string;
   tools: Record<DrawingTool, string>;
 }
 
@@ -202,6 +236,10 @@ export interface UiOptions {
   drawingBar: boolean;
   /** The message shown at the closest zoom (default true). */
   zoomLimitMessage: boolean;
+  /** A button that downloads the chart as a PNG image (default true). */
+  screenshotButton: boolean;
+  /** A button that shows the chart full screen (default true). */
+  fullscreenButton: boolean;
 }
 
 /** All settings, with every value filled in. `chart.options` returns this. */
@@ -225,6 +263,8 @@ export interface ResolvedOptions {
   crosshair: CrosshairOptions;
   legend: LegendOptions;
   lastPrice: LastPriceOptions;
+  livePosition: LivePositionOptions;
+  watermark: WatermarkOptions;
   interaction: InteractionOptions;
   animation: AnimationOptions;
   history: HistoryOptions;
@@ -271,7 +311,19 @@ export const DEFAULT_LABELS: Labels = {
   deleteDrawing: "Delete drawing",
   delete: "Delete",
   color: "Colour",
-  tools: { line: "Line", trend: "Trend line", horizontal: "Horizontal line", vertical: "Vertical line", fib: "Fibonacci retracement" },
+  screenshot: "Download image",
+  fullscreen: "Full screen",
+  exitFullscreen: "Exit full screen",
+  loading: "Loading…",
+  lock: "Lock",
+  unlock: "Unlock",
+  duplicate: "Duplicate",
+  hide: "Hide",
+  alert: "Alert",
+  tools: {
+    line: "Line", trend: "Trend line", horizontal: "Horizontal line", vertical: "Vertical line", rect: "Rectangle",
+    fib: "Fibonacci retracement", measure: "Measure",
+  },
 };
 
 export function defaultOptions(): ResolvedOptions {
@@ -284,13 +336,15 @@ export function defaultOptions(): ResolvedOptions {
     locale: "",
     fps: 60,
     layout: { fontSize: 11, timeAxisHeight: 26, priceAxisMinWidth: 64, paddingTop: 34, paddingBottom: 10, paneMaxShare: 0.75, paneMinHeight: 48, paneHeight: 0.22 },
-    series: { candleWidth: 0.72, wicks: true, lineWidth: 2 },
+    series: { candleWidth: 0.72, wicks: true, lineWidth: 2, highLowLabels: false },
     grid: { horizontal: true, vertical: true },
     priceScale: { visible: true, margin: 0.08, includeIndicators: true, labelSpacing: 64 },
     timeScale: { visible: true, labelSpacing: 110, rightPadding: 0.2, defaultVisibleCandles: 60, minVisibleCandles: 12, maxVisibleCandles: 3000 },
     crosshair: { mode: "snap", style: "dashed", labels: true },
     legend: { visible: true, symbol: true, ohlc: true, change: true, indicators: true },
-    lastPrice: { line: "short", tag: true, emphasisDigits: 3, pulse: true, countdown: true },
+    lastPrice: { line: "short", tag: true, emphasisDigits: 3, pulse: true, countdown: true, countdownDirection: "down" },
+    livePosition: { x: null, y: null },
+    watermark: { text: "", color: "", fontSize: 0 },
     interaction: { pan: true, wheelZoom: true, pinchZoom: true, keyboard: true, doubleClickToLive: true, resizePanes: true, closeIndicators: true, editDrawings: true, zoomStep: 1.6 },
     animation: { enabled: true, priceSmoothing: 110, scaleSmoothing: 140 },
     history: { request: true, threshold: 0.25 },
@@ -301,7 +355,10 @@ export function defaultOptions(): ResolvedOptions {
     },
     format: {},
     labels: { ...DEFAULT_LABELS, tools: { ...DEFAULT_LABELS.tools } },
-    ui: { zoomButtons: true, liveButton: true, drawingToolbar: true, drawingTools: ["line", "trend", "horizontal", "vertical", "fib"], drawingBar: true, zoomLimitMessage: true },
+    ui: {
+      zoomButtons: true, liveButton: true, drawingToolbar: true, drawingTools: ["line", "trend", "horizontal", "vertical", "rect", "fib", "measure"],
+      drawingBar: true, zoomLimitMessage: true, screenshotButton: true, fullscreenButton: true,
+    },
   };
 }
 
@@ -342,6 +399,8 @@ export function applyOptions(current: ResolvedOptions, patch: ChartOptions): Res
   o.timeScale.defaultVisibleCandles = clamp(o.timeScale.defaultVisibleCandles, o.timeScale.minVisibleCandles, o.timeScale.maxVisibleCandles, 60);
   o.interaction.zoomStep = clamp(o.interaction.zoomStep, 1.01, 10, 1.6);
   o.history.threshold = clamp(o.history.threshold, 0, 2, 0.25);
+  const share = (v: number | null | undefined, lo: number, hi: number) => (v === null || v === undefined || !Number.isFinite(v) ? null : Math.min(hi, Math.max(lo, v)));
+  o.livePosition = { x: share(o.livePosition.x, 0.05, 1), y: share(o.livePosition.y, 0.02, 0.98) };
   return o;
 }
 

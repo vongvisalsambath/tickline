@@ -4,5 +4,13 @@
   "installCommand": "npm ci",
   "outputDirectory": "site",
   "framework": null,
-  "cleanUrls": true
+  "cleanUrls": true,
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "tickline-gamma.vercel.app" }],
+      "destination": "https://tickline-chart.vercel.app/:path*",
+      "permanent": true
+    }
+  ]
 }

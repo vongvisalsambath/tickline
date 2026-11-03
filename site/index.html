@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tickline · A live trading chart for any website</title>
-  <meta name="description" content="Tickline is a live trading chart in one HTML tag: smooth real-time prices, candles, indicators, drawing tools and trade markers. Works with React, Vue, Angular, Blazor or plain HTML. 23 KB, no dependencies." />
+  <meta name="description" content="Tickline is a live trading chart in one HTML tag: smooth real-time prices, candles, indicators, drawing tools and trade markers. Works with React, Vue, Angular, Blazor or plain HTML. 28 KB, no dependencies." />
   <meta name="theme-color" content="#0b0f17" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="css/site.css" />
@@ -29,7 +29,7 @@
       <div class="wrap">
         <p class="eyebrow">Open-source chart for trading apps</p>
         <h1>A live trading chart for <span class="hl">any website.</span></h1>
-        <p class="lead">One <code>&lt;trade-chart&gt;</code> tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. Plain HTML, React, Vue, Angular or Blazor. Configure almost everything. 23 KB compressed, no dependencies.</p>
+        <p class="lead">One <code>&lt;trade-chart&gt;</code> tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. Plain HTML, React, Vue, Angular or Blazor. Configure almost everything. 28 KB compressed, no dependencies.</p>
         <div class="actions">
           <a class="btn" href="#start">Get started</a>
           <a class="btn ghost" href="https://github.com/vongvisalsambath/tickline">View on GitHub</a>
@@ -56,9 +56,10 @@
           <span class="muted">Practice positions <small>(demo of the markers API, no money)</small></span>
           <button type="button" class="pos up" data-side="up">▲ Up $10 · 1 min</button>
           <button type="button" class="pos down" data-side="down">▼ Down $10 · 1 min</button>
+          <button type="button" class="pos" id="alert-btn" title="Adds a price alert a little above the live price">Alert +0.05%</button>
           <span id="pl" class="pl" role="status"></span>
         </div>
-        <p class="note">Live prices from Binance's public market data (BTC, ETH, SOL). Drag to look back in time, scroll or pinch to zoom, use the drawing tools on the chart. Not investment advice.</p>
+        <p class="note">Live prices from Binance's public market data (BTC, ETH, SOL). Drag to look back in time, scroll or pinch to zoom, use the drawing tools on the chart. Hover the chart for zoom, image download and full screen (or press F). Not investment advice.</p>
       </div>
     </section>
 
@@ -68,11 +69,11 @@
         <h2 id="features-title">Feels live, stays simple.</h2>
         <div class="features">
           <article><h3>Smooth live prices</h3><p>The price glides between updates, the live point pulses, the last digits are large, and a countdown shows when the candle closes.</p></article>
-          <article><h3>Everything in the box</h3><p>Candles, bars, Heikin-Ashi, line and area; SMA, EMA, Bollinger Bands, RSI, MACD and volume; trend lines and Fibonacci. No plugins to write.</p></article>
+          <article><h3>Everything in the box</h3><p>Candles, bars, Heikin-Ashi, line and area; SMA, EMA, Bollinger Bands, RSI, MACD and volume; trend lines, rectangles, Fibonacci and a measure tool; price alerts. No plugins to write.</p></article>
           <article><h3>Show your users' positions</h3><p>Markers, entry lines, shaded zones and expiry lines with countdowns. Your app keeps its own trading logic.</p></article>
           <article><h3>Works with any stack</h3><p>A standard web component: plain HTML, React, Vue, Angular, Svelte or Blazor. Feed it from WebSocket, REST or SignalR.</p></article>
-          <article><h3>Small and fast</h3><p>23 KB compressed, no dependencies, one canvas, drawing only what's visible. Pauses itself when off-screen.</p></article>
-          <article><h3>Configure almost everything</h3><p>Sizes, fonts, grid, axes, crosshair, legend, zoom limits, gestures, animation, number and date formats, every colour and every word, through one documented options object.</p></article>
+          <article><h3>Any screen, any size</h3><p>Responsive from small phones to wall screens, with full screen on every device (iPhone included) and one-click image download. 28 KB compressed, no dependencies.</p></article>
+          <article><h3>Configure almost everything</h3><p>Sizes, fonts, axes, crosshair, legend, where the live price sits on screen, zoom limits, gestures, formats, every colour and every word, through one documented options object.</p></article>
         </div>
       </div>
     </section>
@@ -212,6 +213,14 @@ window.tickline = {
 };</code></pre>
           </div>
         </div>
+        <div class="ai">
+          <div>
+            <h3>Using an AI assistant?</h3>
+            <p>The <strong>tickline-mcp</strong> server lets Claude, Cursor or VS Code read the docs, look up any setting, check your settings and write the integration code for your framework. Add it once:</p>
+          </div>
+<pre class="code"><code class="sh">claude mcp add tickline -- npx -y tickline-mcp</code></pre>
+          <p class="note">Setup for Claude Desktop, Cursor and VS Code: <a href="https://github.com/vongvisalsambath/tickline/tree/main/mcp">mcp/README.md</a>.</p>
+        </div>
       </div>
     </section>
 
@@ -230,6 +239,10 @@ window.tickline = {
             </select></label>
             <label>Grid <select name="grid"><option value="both">Both</option><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="none">None</option></select></label>
             <label>Crosshair <select name="crosshair"><option value="snap">Snap to candle</option><option value="free">Free</option><option value="hidden">Hidden</option></select></label>
+            <label>Live price at <select name="pos">
+              <option value="auto">Auto (scale fits)</option><option value="center">Centre of the chart</option>
+              <option value="right">Right, middle height</option><option value="x">Centre across only</option>
+            </select></label>
             <label>Live price line <select name="line"><option value="short">Short</option><option value="full">Full width</option><option value="none">None</option></select></label>
             <label>Candle width <input type="range" name="candleWidth" min="0.2" max="1" step="0.04" value="0.72" /></label>
             <label>Font size <input type="range" name="fontSize" min="9" max="15" step="1" value="11" /></label>
@@ -246,6 +259,8 @@ window.tickline = {
               <label><input type="checkbox" name="wicks" checked /> Wicks</label>
               <label><input type="checkbox" name="toolbar" checked /> Drawing tools</label>
               <label><input type="checkbox" name="zoomButtons" checked /> Zoom buttons</label>
+              <label><input type="checkbox" name="highLow" /> High / low</label>
+              <label><input type="checkbox" name="watermark" /> Watermark</label>
             </fieldset>
             <fieldset>
               <legend>Allow</legend>
@@ -290,6 +305,8 @@ window.tickline = {
               <tr><td><code>min-visible-candles</code></td><td>Fewest candles you can zoom in to</td></tr>
               <tr><td><code>drawing-tools</code></td><td>false, or a list: trend, horizontal, fib</td></tr>
               <tr><td><code>controls</code></td><td>none hides all built-in buttons</td></tr>
+              <tr><td><code>live-position</code></td><td>center, or x and y such as 0.8 0.5</td></tr>
+              <tr><td><code>watermark</code></td><td>Faint text behind the candles: {symbol}</td></tr>
               <tr><td><code>options</code></td><td>Any settings as JSON</td></tr>
             </table>
           </div>
@@ -305,8 +322,14 @@ window.tickline = {
               <tr><td><code>setOptions(options) / options</code></td><td>Change any setting; read them all</td></tr>
               <tr><td><code>addIndicator(id, params, style) / removeIndicator(key)</code></td><td>Indicators in code, with colours, width, levels</td></tr>
               <tr><td><code>drawings / setDrawings(list)</code></td><td>Save and restore drawings</td></tr>
-              <tr><td><code>setDrawingTool(tool)</code></td><td>line, trend, horizontal, vertical, fib</td></tr>
+              <tr><td><code>setDrawingTool(tool)</code></td><td>line, trend, horizontal, vertical, rect, fib, measure</td></tr>
               <tr><td><code>zoomIn() / zoomOut() / goLive() / fitContent()</code></td><td>View</td></tr>
+              <tr><td><code>setVisibleRange({ from, to }) / scrollToTime(t)</code></td><td>Show a time range</td></tr>
+              <tr><td><code>addAlert({ price, label })</code></td><td>Price alert; fires tl-alert</td></tr>
+              <tr><td><code>downloadImage() / toBlob()</code></td><td>The chart as a PNG</td></tr>
+              <tr><td><code>toggleFullscreen()</code></td><td>Full screen (also the F key)</td></tr>
+              <tr><td><code>setLoading(true)</code></td><td>Loading placeholder</td></tr>
+              <tr><td><code>getState() / setState(s)</code></td><td>Save and restore a user's chart</td></tr>
             </table>
           </div>
           <div>
@@ -320,6 +343,8 @@ window.tickline = {
               <tr><td><code>tl-drawingschange</code></td><td>All drawings, to save</td></tr>
               <tr><td><code>tl-indicatorschange</code></td><td>The user closed an indicator</td></tr>
               <tr><td><code>tl-zoomlimit</code></td><td>Zoomed in as far as allowed</td></tr>
+              <tr><td><code>tl-alert</code></td><td><code>{ price, direction }</code>: an alert was crossed</td></tr>
+              <tr><td><code>tl-fullscreenchange</code></td><td><code>{ fullscreen }</code></td></tr>
             </table>
           </div>
           <div>
@@ -334,7 +359,7 @@ window.tickline = {
   --tl-text: #7d8799;
   --tl-grid: rgba(148, 163, 184, .07);
 }</code></pre>
-            <p class="muted">Keyboard: ← → pan, + − zoom, End back to live, Home fit all, Esc cancel drawing, Delete removes the selected drawing.</p>
+            <p class="muted">Keyboard: ← → pan, + − zoom, End back to live, Home fit all, Esc cancel drawing, Delete removes the selected drawing, F full screen.</p>
           </div>
         </div>
       </div>
