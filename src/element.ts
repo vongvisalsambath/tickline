@@ -1,9 +1,10 @@
 // <trade-chart>: the chart as a custom element, usable from plain HTML or any framework.
 import { Chart, type ChartEvents, type ChartOptions } from "./chart";
 import { DARK, LIGHT, resolveTheme } from "./theme";
+import { parseIndicatorList } from "./indicators";
 import type { Candle, ChartType, MarkerOptions, PriceLineOptions, Tick, TimeLineOptions, ZoneOptions } from "./types";
 
-const ATTRS = ["type", "timeframe", "theme", "precision", "symbol", "fps", "countdown", "price-line", "timezone", "right-padding", "controls"] as const;
+const ATTRS = ["type", "timeframe", "theme", "precision", "symbol", "fps", "countdown", "price-line", "timezone", "right-padding", "controls", "indicators"] as const;
 
 const STYLE = `
 :host { display: block; position: relative; height: 420px; min-height: 160px; contain: content; }
@@ -77,7 +78,8 @@ export class TradeChartElement extends HTMLElement {
 
     const forward = <K extends keyof ChartEvents>(type: K) =>
       this._chart!.on(type, (detail) => this.dispatchEvent(new CustomEvent(`tl-${type}`, { detail, bubbles: true, composed: true })));
-    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click"] as const).forEach(forward);
+    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange"] as const).forEach(forward);
+    this.applyIndicatorAttribute();
     this._chart.on("followchange", ({ following }) => this.liveBtn.classList.toggle("show", !following));
     this._chart.on("zoomlimit", ({ minCandles }) => this.showToast(`You're at the closest zoom (${minCandles} candles). Pick a smaller timeframe to see more detail.`));
 
@@ -94,6 +96,7 @@ export class TradeChartElement extends HTMLElement {
     if (!this._chart) return;
     if (name === "theme") { this.applyTheme(); return; }
     if (name === "controls") return;
+    if (name === "indicators") { this.applyIndicatorAttribute(); return; }
     this._chart.setOptions(this.readOptions());
     void value;
   }
@@ -118,6 +121,11 @@ export class TradeChartElement extends HTMLElement {
   updateOverlay(id: string, patch: Parameters<Chart["updateOverlay"]>[1]): void { this.run((c) => c.updateOverlay(id, patch)); }
   removeOverlay(id: string): void { this.run((c) => c.removeOverlay(id)); }
   clearOverlays(): void { this.run((c) => c.clearOverlays()); }
+  /** Adds an indicator ("sma", "ema", "bb", "rsi", "macd", "volume" or one you registered). Returns its key. */
+  addIndicator(id: string, params?: Record<string, number> | number[]): string { return this.runId((c) => c.addIndicator(id, params)); }
+  updateIndicator(key: string, params: Record<string, number> | number[]): void { this.run((c) => c.updateIndicator(key, params)); }
+  removeIndicator(key: string): void { this.run((c) => c.removeIndicator(key)); }
+  get indicatorList() { return this._chart?.indicatorList ?? []; }
   zoomIn(): void { this._chart?.zoomIn(); }
   zoomOut(): void { this._chart?.zoomOut(); }
   goLive(): void { this._chart?.goLive(); }
@@ -132,6 +140,18 @@ export class TradeChartElement extends HTMLElement {
   }
 
   // ---------------------------------------------------------------- helpers
+
+  private attrIndicatorKeys: string[] = [];
+  /** indicators="sma:20, rsi:14, volume" — replaces the indicators that came from the attribute. */
+  private applyIndicatorAttribute(): void {
+    const c = this._chart;
+    if (!c) return;
+    this.attrIndicatorKeys.forEach((k) => c.removeIndicator(k));
+    this.attrIndicatorKeys = [];
+    for (const { id, params } of parseIndicatorList(this.getAttribute("indicators") ?? "")) {
+      try { this.attrIndicatorKeys.push(c.addIndicator(id, params)); } catch (e) { console.warn(`<trade-chart>: ${(e as Error).message}`); }
+    }
+  }
 
   private readOptions(): ChartOptions {
     const a = (n: string) => this.getAttribute(n);

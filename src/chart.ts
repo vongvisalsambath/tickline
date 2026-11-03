@@ -8,6 +8,7 @@ import { CandleStore, heikinAshi } from "./data";
 import { autoPrecision, formatPrice, priceTicks, splitEmphasis, stepDecimals, niceStep } from "./price";
 import { formatCountdown, formatTime, parseTimeframe, timeTicks, type ParsedTimeframe, MS } from "./time";
 import { DARK, LIGHT } from "./theme";
+import { getIndicator, resolveParams, type IndicatorDefinition, type IndicatorOutput } from "./indicators";
 
 export interface ChartOptions {
   type?: ChartType;
@@ -51,7 +52,28 @@ export interface ChartEvents {
   /** Following the live edge turned on or off (e.g. the user panned away). */
   followchange: { following: boolean };
   click: CrosshairInfo;
+  /** The list of indicators changed (e.g. the user closed one from its pane). */
+  indicatorschange: IndicatorInfo[];
 }
+
+export interface IndicatorInfo {
+  key: string;
+  id: string;
+  label: string;
+  params: Record<string, number>;
+  placement: "main" | "pane";
+}
+
+interface ActiveIndicator {
+  def: IndicatorDefinition;
+  params: Record<string, number>;
+  cache: { version: number; out: IndicatorOutput } | null;
+  /** Share of the chart height (panes only). */
+  frac: number;
+}
+
+interface PaneBox { key: string | null; top: number; h: number; min?: number; max?: number }
+interface Hit { x: number; y: number; w: number; h: number; run: () => void }
 
 type Handler<T> = (e: T) => void;
 
@@ -90,6 +112,10 @@ export class Chart {
   private dataVersion = 0;
   private historyRequestedFor = NaN;
   private lastRange: VisibleRange = { from: 0, to: 0 };
+  private indicators = new Map<string, ActiveIndicator>();
+  private layoutBoxes: PaneBox[] = [];
+  private hits: Hit[] = [];
+  private paneDrag: { index: number; y: number; above: number; below: number } | null = null;
 
   // input
   private pointer: { x: number; y: number } | null = null;
@@ -232,6 +258,33 @@ export class Chart {
   removeOverlay(id: string): void { if (this.overlays.delete(id)) this.markDirty(); }
   clearOverlays(): void { this.overlays.clear(); this.markDirty(); }
 
+  // ================================================================ public API: indicators
+
+  /**
+   * Adds a built-in or registered indicator: "sma", "ema", "bb", "rsi", "macd", "volume".
+   * Params by name ({ period: 14 }) or in order ([12, 26, 9]). Returns a key for update/remove.
+   */
+  addIndicator(id: string, params?: Record<string, number> | number[]): string {
+    const def = getIndicator(id.toLowerCase());
+    if (!def) throw new Error(`Unknown indicator "${id}".`);
+    const key = "ind" + this.nextId++;
+    this.indicators.set(key, { def, params: resolveParams(def, params), cache: null, frac: def.id === "volume" ? 0.16 : 0.22 });
+    this.markDirty();
+    return key;
+  }
+  updateIndicator(key: string, params: Record<string, number> | number[]): void {
+    const ind = this.indicators.get(key);
+    if (!ind) return;
+    ind.params = resolveParams(ind.def, Array.isArray(params) ? params : { ...ind.params, ...params });
+    ind.cache = null;
+    this.markDirty();
+  }
+  removeIndicator(key: string): void { if (this.indicators.delete(key)) this.markDirty(); }
+  clearIndicators(): void { this.indicators.clear(); this.markDirty(); }
+  get indicatorList(): IndicatorInfo[] {
+    return [...this.indicators.entries()].map(([key, i]) => ({ key, id: i.def.id, label: i.def.label(i.params), params: { ...i.params }, placement: i.def.placement }));
+  }
+
   // ================================================================ public API: view
 
   zoomIn(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.opts.rightPadding : 0.5), 1 / 1.6); }
@@ -328,12 +381,31 @@ export class Chart {
 
   private timeToX(t: number): number { return this.plotW() - (this.rightTime - t) / this.msPerPx; }
   private xToTime(x: number): number { return this.rightTime - (this.plotW() - x) * this.msPerPx; }
+  /** Height of the price pane (the rest goes to indicator panes). */
+  private mainH(): number { return this.layoutBoxes[0]?.h ?? this.plotH(); }
+  /** Room at the top of the price pane for the legend (one more row when price indicators are on). */
+  private padTop(): number { return PAD_TOP + ([...this.indicators.values()].some((i) => i.def.placement === "main") ? 18 : 0); }
+
+  private computeLayout(): PaneBox[] {
+    const ph = this.plotH();
+    const subs = [...this.indicators.entries()].filter(([, i]) => i.def.placement === "pane");
+    let fracs = subs.map(([, i]) => i.frac);
+    const total = fracs.reduce((a, b) => a + b, 0);
+    if (total > 0.75) fracs = fracs.map((f) => (f * 0.75) / total); // the price pane keeps at least a quarter
+    const heights = fracs.map((f) => Math.max(48, Math.round(f * ph)));
+    const mainH = Math.max(80, ph - heights.reduce((a, b) => a + b, 0));
+    const boxes: PaneBox[] = [{ key: null, top: 0, h: mainH }];
+    let top = mainH;
+    subs.forEach(([key], i) => { boxes.push({ key, top, h: heights[i] }); top += heights[i]; });
+    return boxes;
+  }
+
   private priceToY(p: number): number {
-    const top = PAD_TOP, bottom = this.plotH() - PAD_BOTTOM;
+    const top = this.padTop(), bottom = this.mainH() - PAD_BOTTOM;
     return bottom - ((p - this.priceMin) / (this.priceMax - this.priceMin || 1)) * (bottom - top);
   }
   private yToPrice(y: number): number {
-    const top = PAD_TOP, bottom = this.plotH() - PAD_BOTTOM;
+    const top = this.padTop(), bottom = this.mainH() - PAD_BOTTOM;
     return this.priceMin + ((bottom - y) / (bottom - top)) * (this.priceMax - this.priceMin);
   }
 
@@ -461,6 +533,14 @@ export class Chart {
     if (Number.isFinite(this.displayPrice) && this.store.last && this.store.last.time <= right) {
       lo = Math.min(lo, this.displayPrice); hi = Math.max(hi, this.displayPrice);
     }
+    for (const ind of this.indicators.values()) {
+      if (ind.def.placement !== "main") continue;
+      const out = this.output(ind);
+      for (const line of out.lines) for (let i = from; i < to; i++) {
+        const v = line.values[i];
+        if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      }
+    }
     if (!Number.isFinite(lo)) {
       const last = this.store.last;
       if (!last) return null;
@@ -486,28 +566,33 @@ export class Chart {
     const sample = formatPrice(Math.max(Math.abs(this.priceMax), Math.abs(this.priceMin)), dec);
     this.axisW = Math.max(64, Math.ceil(ctx.measureText(sample).width + 34));
     const pw = this.plotW(), ph = this.plotH();
+    this.layoutBoxes = this.computeLayout();
+    this.hits = [];
+    const mh = this.mainH();
 
     // grid + axes
-    const pTicks = priceTicks(this.priceMin, this.priceMax, Math.max(2, Math.floor((ph - PAD_TOP) / 64)));
+    const pTicks = priceTicks(this.priceMin, this.priceMax, Math.max(2, Math.floor((mh - this.padTop()) / 64)));
     const pStep = pTicks.length > 1 ? pTicks[1] - pTicks[0] : niceStep(this.priceMax - this.priceMin, 4);
     const left = this.xToTime(0), right = this.xToTime(pw);
     const tTicks = timeTicks(left, right, 110 * this.msPerPx, this.tz(right));
     ctx.lineWidth = 1;
     ctx.strokeStyle = th.grid;
     ctx.beginPath();
-    for (const p of pTicks) { const y = crisp(this.priceToY(p)); ctx.moveTo(0, y); ctx.lineTo(pw, y); }
+    for (const p of pTicks) { const y = crisp(this.priceToY(p)); if (y < mh) { ctx.moveTo(0, y); ctx.lineTo(pw, y); } }
     for (const t of tTicks) { const x = crisp(this.timeToX(t.time)); ctx.moveTo(x, 0); ctx.lineTo(x, ph); }
     ctx.stroke();
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 0, pw, ph);
+    ctx.rect(0, 0, pw, mh);
     ctx.clip();
     this.drawZones();
     this.drawSeries();
+    this.drawMainIndicators();
     this.drawOverlays();
     this.drawLivePoint(now);
     ctx.restore();
+    this.drawPanes();
 
     // axis lines
     ctx.strokeStyle = th.axisLine;
@@ -524,7 +609,7 @@ export class Chart {
     const labelDec = Math.max(stepDecimals(pStep), 0);
     for (const p of pTicks) {
       const y = this.priceToY(p);
-      if (y < 8 || y > ph - 8) continue;
+      if (y < 8 || y > mh - 8) continue;
       ctx.fillText(formatPrice(p, Math.min(dec, labelDec)), pw + 10, y);
     }
     // time labels
@@ -560,13 +645,13 @@ export class Chart {
         pts.push([this.timeToX(t), this.priceToY(c.close)]);
       }
       if (type === "area" && pts.length > 1) {
-        const g = ctx.createLinearGradient(0, PAD_TOP, 0, this.plotH());
+        const g = ctx.createLinearGradient(0, this.padTop(), 0, this.mainH());
         g.addColorStop(0, th.areaTop);
         g.addColorStop(1, th.areaBottom);
         ctx.beginPath();
-        ctx.moveTo(pts[0][0], this.plotH());
+        ctx.moveTo(pts[0][0], this.mainH());
         for (const [x, y] of pts) ctx.lineTo(x, y);
-        ctx.lineTo(pts[pts.length - 1][0], this.plotH());
+        ctx.lineTo(pts[pts.length - 1][0], this.mainH());
         ctx.closePath();
         ctx.fillStyle = g;
         ctx.fill();
@@ -629,7 +714,7 @@ export class Chart {
       if (ov.kind !== "zone") continue;
       const z = ov.o;
       const y1 = z.from === "top" ? 0 : this.priceToY(z.from);
-      const y2 = z.to === "bottom" ? this.plotH() : this.priceToY(z.to);
+      const y2 = z.to === "bottom" ? this.mainH() : this.priceToY(z.to);
       const x1 = z.start !== undefined ? this.timeToX(z.start) : 0;
       const x2 = z.end !== undefined ? this.timeToX(z.end) : this.plotW();
       ctx.fillStyle = z.color;
@@ -639,7 +724,7 @@ export class Chart {
 
   private drawOverlays(): void {
     const { ctx, theme: th } = this;
-    const pw = this.plotW(), ph = this.plotH();
+    const pw = this.plotW(), ph = this.mainH();
     for (const ov of this.overlays.values()) {
       if (ov.kind === "priceLine") {
         const o = ov.o;
@@ -659,10 +744,10 @@ export class Chart {
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.setLineDash(dash(o.style ?? "solid"));
-        ctx.beginPath(); ctx.moveTo(x, PAD_TOP - 8); ctx.lineTo(x, ph); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, this.padTop() - 8); ctx.lineTo(x, ph); ctx.stroke();
         ctx.setLineDash([]);
         const parts = [o.label, o.countdown ? formatCountdown(o.time - Date.now()) : ""].filter(Boolean).join("  ");
-        if (parts) pill(ctx, parts, x, PAD_TOP - 18, { bg: color, fg: th.background, font: `600 11px ${th.monoFont}`, align: "center", within: [4, pw - 4] });
+        if (parts) pill(ctx, parts, x, this.padTop() - 18, { bg: color, fg: th.background, font: `600 11px ${th.monoFont}`, align: "center", within: [4, pw - 4] });
       }
     }
     for (const ov of this.overlays.values()) {
@@ -689,9 +774,9 @@ export class Chart {
       if (ov.kind !== "priceLine") continue;
       const o = ov.o;
       const y = this.priceToY(o.price);
-      if (y < 0 || y > this.plotH()) continue;
+      if (y < 0 || y > this.mainH()) continue;
       const color = o.color ?? th.accent;
-      pill(ctx, formatPrice(o.price, dec), this.plotW() + 4, y, { bg: color, fg: "#fff", font: `11px ${th.monoFont}`, align: "left", width: this.axisW - 8 });
+      if (o.axisLabel !== false) pill(ctx, formatPrice(o.price, dec), this.plotW() + 4, y, { bg: color, fg: "#fff", font: `11px ${th.monoFont}`, align: "left", width: this.axisW - 8 });
       if (o.label) {
         const x = o.from !== undefined ? Math.max(6, this.timeToX(o.from) + 6) : 8;
         pill(ctx, o.label, x, y - 11, { bg: color, fg: "#fff", font: `600 10px ${th.font}`, align: "left" });
@@ -743,7 +828,7 @@ export class Chart {
   private drawLiveTag(dec: number): void {
     const { ctx, theme: th } = this;
     if (!this.store.last || !Number.isFinite(this.displayPrice)) return;
-    const y = Math.min(this.plotH() - 10, Math.max(10, this.priceToY(this.displayPrice)));
+    const y = Math.min(this.mainH() - 10, Math.max(10, this.priceToY(this.displayPrice)));
     const shown = this.store.last.close; // the tag shows the real last price; only the line glides
     const [head, tail] = splitEmphasis(formatPrice(shown, dec), this.opts.emphasisDigits);
     const x = this.plotW() + 1, w = this.axisW - 2, h = 22;
@@ -788,7 +873,9 @@ export class Chart {
     ctx.moveTo(0, crisp(p.y)); ctx.lineTo(pw, crisp(p.y));
     ctx.stroke();
     ctx.setLineDash([]);
-    pill(ctx, formatPrice(this.yToPrice(p.y), dec), pw + 4, p.y, { bg: th.pillBackground, fg: th.pillText, font: `11px ${th.monoFont}`, align: "left", width: this.axisW - 8 });
+    const box = this.layoutBoxes.find((b) => p.y >= b.top && p.y < b.top + b.h);
+    const value = !box || box.key === null ? formatPrice(this.yToPrice(p.y), dec) : this.paneValueLabel(box, p.y);
+    pill(ctx, value, pw + 4, p.y, { bg: th.pillBackground, fg: th.pillText, font: `11px ${th.monoFont}`, align: "left", width: this.axisW - 8 });
     const at = c ? c.time : t;
     const full = formatTime(at, "full", this.tz(at)); // 2026-11-03 20:07:15
     const tLabel = this.tf.ms < MS.MIN ? full : this.tf.ms < MS.DAY ? full.slice(0, 16) : full.slice(0, 10);
@@ -831,6 +918,232 @@ export class Chart {
     const chg = c.open ? ((close - c.open) / c.open) * 100 : 0;
     ctx.fillStyle = color;
     ctx.fillText(`${chg >= 0 ? "+" : "−"}${Math.abs(chg).toFixed(2)}%`, x, y);
+    this.drawMainIndicatorLegend(dec, hovered);
+  }
+
+  /** Second legend row: each price-pane indicator with its value and a close button. */
+  private drawMainIndicatorLegend(dec: number, hovered: Candle | null): void {
+    const { ctx, theme: th } = this;
+    let x = 12;
+    const y = 36;
+    const idx = hovered ? this.store.indexAtOrAfter(hovered.time) : this.store.length - 1;
+    for (const [key, ind] of this.indicators) {
+      if (ind.def.placement !== "main") continue;
+      const out = this.output(ind);
+      ctx.font = `11px ${th.font}`;
+      ctx.fillStyle = out.lines[0]?.color ?? th.text;
+      const label = ind.def.label(ind.params);
+      ctx.fillText(label, x, y);
+      x += ctx.measureText(label).width + 6;
+      ctx.font = `11px ${th.monoFont}`;
+      for (const line of out.lines) {
+        const v = line.values[idx];
+        if (!Number.isFinite(v)) continue;
+        const s = formatPrice(v, dec);
+        ctx.fillStyle = line.color;
+        ctx.fillText(s, x, y);
+        x += ctx.measureText(s).width + 6;
+      }
+      x = this.closeButton(x, y, () => { this.removeIndicator(key); this.emit("indicatorschange", this.indicatorList); }) + 14;
+      if (x > this.plotW() - 80) break;
+    }
+  }
+
+  // ================================================================ indicators: drawing
+
+  private output(ind: ActiveIndicator): IndicatorOutput {
+    if (!ind.cache || ind.cache.version !== this.dataVersion) ind.cache = { version: this.dataVersion, out: ind.def.compute(this.store.all, ind.params) };
+    return ind.cache.out;
+  }
+
+  /** Lines and bands of indicators drawn over the price (inside the price pane's clip). */
+  private drawMainIndicators(): void {
+    const { ctx } = this;
+    const { from, to } = this.visibleCandles();
+    for (const ind of this.indicators.values()) {
+      if (ind.def.placement !== "main") continue;
+      const out = this.output(ind);
+      if (out.band) {
+        const up = out.lines[out.band.upper].values, lo = out.lines[out.band.lower].values;
+        ctx.beginPath();
+        let started = false;
+        for (let i = from; i < to; i++) if (Number.isFinite(up[i])) { const x = this.candleX(i), y = this.priceToY(up[i]); if (started) ctx.lineTo(x, y); else { ctx.moveTo(x, y); started = true; } }
+        for (let i = to - 1; i >= from; i--) if (Number.isFinite(lo[i])) ctx.lineTo(this.candleX(i), this.priceToY(lo[i]));
+        ctx.closePath();
+        ctx.fillStyle = out.band.color;
+        if (started) ctx.fill();
+      }
+      for (const line of out.lines) this.strokeLine(line.values, from, to, line.color, line.width ?? 1.5, (v) => this.priceToY(v));
+    }
+  }
+
+  private candleX(i: number): number { return this.timeToX(this.store.at(i).time + this.tf.ms / 2); }
+
+  private strokeLine(values: ArrayLike<number>, from: number, to: number, color: string, width: number, y: (v: number) => number): void {
+    const { ctx } = this;
+    ctx.beginPath();
+    let pen = false;
+    for (let i = from; i < to; i++) {
+      const v = values[i];
+      if (!Number.isFinite(v)) { pen = false; continue; }
+      const x = this.candleX(i), yy = y(v);
+      if (pen) ctx.lineTo(x, yy); else { ctx.moveTo(x, yy); pen = true; }
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+
+  /** Indicator panes below the price: divider, levels, histogram, lines, own axis labels, and a header. */
+  private drawPanes(): void {
+    const { ctx, theme: th } = this;
+    const pw = this.plotW();
+    const { from, to } = this.visibleCandles();
+    const candlePx = this.tf.ms / this.msPerPx;
+    const barW = Math.max(1, Math.min(candlePx * 0.72, candlePx - 1));
+    const hovered = this.pointer && !this.drag?.moved && this.pointer.x <= pw ? this.store.candleAt(this.xToTime(this.pointer.x)) : null;
+    const idx = hovered ? this.store.indexAtOrAfter(hovered.time) : this.store.length - 1;
+
+    for (const box of this.layoutBoxes.slice(1)) {
+      const ind = this.indicators.get(box.key!);
+      if (!ind) continue;
+      const out = this.output(ind);
+      // scale: fixed range, or fit the visible values (histograms include zero)
+      let lo = Infinity, hi = -Infinity;
+      if (out.range) [lo, hi] = out.range;
+      else {
+        const scan = (vals: ArrayLike<number>) => { for (let i = from; i < to; i++) { const v = vals[i]; if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } } };
+        out.lines.forEach((l) => scan(l.values));
+        if (out.histogram) { scan(out.histogram.values); lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+        if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+        if (hi - lo < 1e-12) { hi += 1; lo -= 1; }
+        const pad = (hi - lo) * 0.1;
+        if (!out.histogram || lo < 0) lo -= pad;
+        hi += pad;
+      }
+      box.min = lo; box.max = hi;
+      const y = (v: number) => this.paneY(box, v);
+
+      // divider and the right axis line
+      ctx.strokeStyle = th.axisLine;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, crisp(box.top)); ctx.lineTo(this.w, crisp(box.top)); ctx.stroke();
+
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, box.top + 1, pw, box.h - 1); ctx.clip();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = th.grid.replace(/[\d.]+\)$/, "0.25)");
+      for (const lvl of out.levels ?? []) { const ly = crisp(y(lvl)); ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(pw, ly); ctx.stroke(); }
+      ctx.setLineDash([]);
+      if (out.histogram) {
+        const h = out.histogram, zero = y(Math.max(lo, Math.min(hi, 0)));
+        for (const upPass of [1, 0]) {
+          ctx.fillStyle = upPass ? h.upColor : h.downColor;
+          for (let i = from; i < to; i++) {
+            const v = h.values[i];
+            if (!Number.isFinite(v) || h.up[i] !== upPass) continue;
+            const x = this.candleX(i), yv = y(v);
+            ctx.fillRect(Math.round(x - barW / 2), Math.min(zero, yv), Math.max(1, Math.round(barW)), Math.max(1, Math.abs(zero - yv)));
+          }
+        }
+      }
+      for (const line of out.lines) this.strokeLine(line.values, from, to, line.color, line.width ?? 1.5, y);
+      ctx.restore();
+
+      // axis labels
+      ctx.font = `10px ${th.monoFont}`;
+      ctx.fillStyle = th.text;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      const ticks = out.range ? (out.levels ?? []) : priceTicks(lo, hi, Math.max(1, Math.floor(box.h / 40)));
+      const step = ticks.length > 1 ? ticks[1] - ticks[0] : hi - lo;
+      for (const t of ticks) {
+        const ty = y(t);
+        if (ty < box.top + 8 || ty > box.top + box.h - 6) continue;
+        ctx.fillText(this.formatPaneValue(t, step), pw + 10, ty);
+      }
+
+      // header: name, values at the hovered (or last) candle, close button
+      let x = 10;
+      const hy = box.top + 12;
+      ctx.font = `11px ${th.font}`;
+      ctx.fillStyle = th.textStrong;
+      const label = ind.def.label(ind.params);
+      ctx.fillText(label, x, hy);
+      x += ctx.measureText(label).width + 8;
+      ctx.font = `11px ${th.monoFont}`;
+      const vals: [string, number][] = out.lines.map((l) => [l.color, l.values[idx]]);
+      if (out.histogram) vals.push([out.histogram.up[idx] ? out.histogram.upColor : out.histogram.downColor, out.histogram.values[idx]]);
+      for (const [color, v] of vals) {
+        if (!Number.isFinite(v)) continue;
+        const s = this.formatPaneValue(v, step / 100);
+        ctx.fillStyle = color.startsWith("rgba") ? color.replace(/[\d.]+\)$/, "1)") : color;
+        ctx.fillText(s, x, hy);
+        x += ctx.measureText(s).width + 8;
+      }
+      const key = box.key!;
+      this.closeButton(x, hy, () => { this.removeIndicator(key); this.emit("indicatorschange", this.indicatorList); });
+    }
+  }
+
+  private paneY(box: PaneBox, v: number): number {
+    const top = box.top + 22, bottom = box.top + box.h - 6;
+    const lo = box.min ?? 0, hi = box.max ?? 1;
+    return bottom - ((v - lo) / (hi - lo || 1)) * (bottom - top);
+  }
+
+  private paneValueLabel(box: PaneBox, y: number): string {
+    const top = box.top + 22, bottom = box.top + box.h - 6;
+    const lo = box.min ?? 0, hi = box.max ?? 1;
+    const v = lo + ((bottom - y) / (bottom - top)) * (hi - lo);
+    return this.formatPaneValue(v, (hi - lo) / 100);
+  }
+
+  /** Compact numbers for panes: 54.2, 0.00031, 1.2K, 3.4M. */
+  private formatPaneValue(v: number, step: number): string {
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(2) + "M";
+    if (a >= 1e4) return (v / 1e3).toFixed(1) + "K";
+    return formatPrice(v, Math.min(8, stepDecimals(Math.abs(step) || 1)));
+  }
+
+  /** A small × drawn at (x, y); registers a hit area. Returns the x after it. */
+  private closeButton(x: number, y: number, run: () => void): number {
+    const { ctx, theme: th } = this;
+    const s = 14;
+    ctx.strokeStyle = th.text;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y - 3); ctx.lineTo(x + 10, y + 3);
+    ctx.moveTo(x + 10, y - 3); ctx.lineTo(x + 4, y + 3);
+    ctx.stroke();
+    this.hits.push({ x, y: y - s / 2, w: s, h: s, run });
+    return x + s;
+  }
+
+  private hitAt(p: { x: number; y: number }): Hit | undefined {
+    // generous margins so the small buttons are easy to hit with a finger
+    return this.hits.find((h) => p.x >= h.x - 6 && p.x <= h.x + h.w + 6 && p.y >= h.y - 6 && p.y <= h.y + h.h + 6);
+  }
+
+  /** Index of the pane whose top divider is under the pointer (0 = none). */
+  private dividerAt(p: { x: number; y: number }): number {
+    if (p.x > this.plotW()) return 0;
+    for (let i = 1; i < this.layoutBoxes.length; i++) if (Math.abs(p.y - this.layoutBoxes[i].top) <= 4) return i;
+    return 0;
+  }
+
+  private resizePanes(y: number): void {
+    const d = this.paneDrag!;
+    const dy = y - d.y;
+    const minAbove = d.index === 1 ? 120 : 48;
+    const above = Math.max(minAbove, d.above + dy), below = Math.max(48, d.above + d.below - above);
+    const ph = this.plotH();
+    const belowKey = this.layoutBoxes[d.index].key!, aboveKey = this.layoutBoxes[d.index - 1].key;
+    this.indicators.get(belowKey)!.frac = below / ph;
+    if (aboveKey) this.indicators.get(aboveKey)!.frac = above / ph;
+    this.markDirty();
   }
 
   // ================================================================ input
@@ -865,6 +1178,13 @@ export class Chart {
         this.drag = null;
         return;
       }
+      const divider = this.dividerAt(p);
+      if (divider > 0) {
+        const above = this.layoutBoxes[divider - 1], below = this.layoutBoxes[divider];
+        this.paneDrag = { index: divider, y: p.y, above: above.h, below: below.h };
+        return;
+      }
+      if (this.hitAt(p)) return;
       if (p.x <= this.plotW()) this.drag = { x: p.x, rightTime: this.rightTime, moved: false, id: e.pointerId };
       this.pointer = e.pointerType === "mouse" ? p : null;
       this.markDirty();
@@ -884,6 +1204,11 @@ export class Chart {
         this.markDirty();
         return;
       }
+      if (this.paneDrag) {
+        this.resizePanes(p.y);
+        return;
+      }
+      if (!this.drag) c.style.cursor = this.dividerAt(p) > 0 ? "row-resize" : this.hitAt(p) ? "pointer" : "crosshair";
       if (this.drag && this.drag.id === e.pointerId) {
         const dx = p.x - this.drag.x;
         if (Math.abs(dx) > 3) this.drag.moved = true;
@@ -900,6 +1225,9 @@ export class Chart {
 
     const end = (e: PointerEvent) => {
       this.touches.delete(e.pointerId);
+      if (this.paneDrag) { this.paneDrag = null; c.style.cursor = "crosshair"; this.markDirty(); return; }
+      const hit = this.drag?.moved ? null : this.hitAt(this.local(e));
+      if (hit) { this.drag = null; hit.run(); this.markDirty(); return; }
       if (this.touches.size < 2) this.pinch = null;
       if (this.drag && this.drag.id === e.pointerId) {
         if (!this.drag.moved) {

@@ -22,12 +22,17 @@
     <button id="theme" type="button">Light</button>
     <button id="buy" type="button">Mark a buy</button>
     <button id="clear" type="button">Clear marks</button>
+    <select id="ind" aria-label="Indicators"><option value="">No indicators</option><option>sma:20</option><option>ema:50</option><option>bb:20:2</option><option>rsi:14</option><option>macd:12:26:9</option><option>volume</option><option value="sma:20,bb,rsi,macd,volume">All</option></select>
+    <button id="up" type="button">Up $10 (1 min)</button>
+    <button id="down" type="button">Down $10 (1 min)</button>
+    <span id="pl"></span>
   </header>
   <trade-chart id="chart" symbol="EUR/USD (simulated)" timeframe="1m"></trade-chart>
 
   <script type="module">
     import "../dist/tickline.js";
     import { createMarket, history } from "./sim.js";
+    import { createPositions } from "./positions.js";
 
     const chart = document.getElementById("chart");
     const params = new URLSearchParams(location.search);
@@ -65,6 +70,17 @@
     document.getElementById("buy").onclick = markBuy;
     document.getElementById("clear").onclick = () => { ids.splice(0).forEach((id) => chart.removeOverlay(id)); };
     if (params.has("marks")) setTimeout(markBuy, 300);
+    const ind = document.getElementById("ind");
+    if (params.get("ind")) { chart.setAttribute("indicators", params.get("ind")); ind.value = params.get("ind"); }
+    ind.onchange = () => chart.setAttribute("indicators", ind.value);
+    const money = (v) => (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toFixed(2);
+    const pos = createPositions(chart, { getPrice: () => market.price, onChange: ({ count, expected }) => {
+      document.getElementById("pl").textContent = count ? count + " open, expected " + money(expected) : "";
+    } });
+    document.getElementById("up").onclick = () => pos.place("up", 10, 60000);
+    document.getElementById("down").onclick = () => pos.place("down", 10, 60000);
+    if (params.has("positions")) setTimeout(() => { pos.place("up", 10, 60000); setTimeout(() => pos.place("down", 10, 45000), 2500); }, 400);
+    window.__pos = pos;
     window.__chart = chart;
   </script>
 </body>

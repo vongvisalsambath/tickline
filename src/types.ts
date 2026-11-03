@@ -62,6 +62,8 @@ export interface PriceLineOptions {
   from?: number;
   /** Draw only up to this time (e.g. to the expiry). Default: full width. */
   to?: number;
+  /** Show the price in a tag on the price axis (default true). */
+  axisLabel?: boolean;
 }
 
 /** A vertical line at a time, e.g. an expiry. With `countdown`, shows the time left until it. */
