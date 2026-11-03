@@ -45,7 +45,7 @@
     "type": "git",
     "url": "https://github.com/vongvisalsambath/tickline"
   },
-  "homepage": "https://tickline.vercel.app",
+  "homepage": "https://tickline-chart.vercel.app",
   "devDependencies": {
     "esbuild": "^0.28.2",
     "happy-dom": "^20.0.10",

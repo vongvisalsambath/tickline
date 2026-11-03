@@ -2,7 +2,7 @@
 
 A live trading chart for any website. One `<trade-chart>` tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. It works in plain HTML, React, Vue, Angular, Blazor, or anything else that renders HTML.
 
-**[Live demo and docs](https://tickline.vercel.app)** · about 19 KB gzipped · no dependencies · MIT
+**[Live demo and docs](https://tickline-chart.vercel.app)** · about 19 KB gzipped · no dependencies · MIT
 
 - **Feels live.** The price eases between trades, the scale glides, and a countdown shows the time left in the candle.
 - **Six chart types.** Candles, hollow candles, bars, Heikin-Ashi, line and area. Timeframes from 5 seconds to 1 month.
