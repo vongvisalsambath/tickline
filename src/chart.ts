@@ -9,6 +9,7 @@ import { autoPrecision, formatPrice, priceTicks, splitEmphasis, stepDecimals, ni
 import { formatCountdown, formatTime, parseTimeframe, timeTicks, type ParsedTimeframe, MS } from "./time";
 import { DARK, LIGHT } from "./theme";
 import { getIndicator, resolveParams, type IndicatorDefinition, type IndicatorOutput } from "./indicators";
+import { FIB_LEVELS, POINTS_NEEDED, distToDrawing, fibPrice, rayEnd, type Drawing, type DrawingPoint, type DrawingTool } from "./drawings";
 
 export interface ChartOptions {
   type?: ChartType;
@@ -54,6 +55,12 @@ export interface ChartEvents {
   click: CrosshairInfo;
   /** The list of indicators changed (e.g. the user closed one from its pane). */
   indicatorschange: IndicatorInfo[];
+  /** Drawings were added, moved, restyled or deleted. Save `drawings` to restore them later. */
+  drawingschange: Drawing[];
+  /** A drawing was selected (or the selection cleared). */
+  drawingselect: Drawing | null;
+  /** The active drawing tool changed (null when placing finished or was cancelled). */
+  toolchange: DrawingTool | null;
 }
 
 export interface IndicatorInfo {
@@ -116,6 +123,13 @@ export class Chart {
   private layoutBoxes: PaneBox[] = [];
   private hits: Hit[] = [];
   private paneDrag: { index: number; y: number; above: number; below: number } | null = null;
+  private drawingList: Drawing[] = [];
+  private tool: DrawingTool | null = null;
+  private placing: { tool: DrawingTool; points: DrawingPoint[]; hover: DrawingPoint | null } | null = null;
+  private selectedId: string | null = null;
+  private drawDrag: { id: string; handle: number; start: { x: number; y: number }; orig: DrawingPoint[]; moved: boolean } | null = null;
+  /** Colour for new drawings. */
+  drawingColor = "#4c9aff";
 
   // input
   private pointer: { x: number; y: number } | null = null;
@@ -284,6 +298,61 @@ export class Chart {
   get indicatorList(): IndicatorInfo[] {
     return [...this.indicators.entries()].map(([key, i]) => ({ key, id: i.def.id, label: i.def.label(i.params), params: { ...i.params }, placement: i.def.placement }));
   }
+
+  // ================================================================ public API: drawings
+
+  /** Starts placing a drawing with this tool (click once or twice on the chart), or stops with null. */
+  setDrawingTool(tool: DrawingTool | null): void {
+    this.tool = tool;
+    this.placing = tool ? { tool, points: [], hover: null } : null;
+    this.select(null);
+    this.emit("toolchange", tool);
+    this.markDirty();
+  }
+  get drawingTool(): DrawingTool | null { return this.tool; }
+
+  /** Copies of all drawings, safe to store as JSON. */
+  get drawings(): Drawing[] { return this.drawingList.map((d) => ({ ...d, points: d.points.map((q) => ({ ...q })) })); }
+
+  /** Replaces all drawings (e.g. restoring saved ones). */
+  setDrawings(list: readonly Drawing[]): void {
+    this.drawingList = list.filter((d) => d && POINTS_NEEDED[d.tool] && d.points?.length >= POINTS_NEEDED[d.tool])
+      .map((d) => ({ ...d, id: d.id || "dr" + this.nextId++, points: d.points.map((q) => ({ ...q })) }));
+    this.select(null);
+    this.markDirty();
+  }
+
+  /** Adds a drawing in code. Returns its id. */
+  addDrawing(d: Omit<Drawing, "id" | "color"> & { color?: string }): string {
+    const id = "dr" + this.nextId++;
+    this.drawingList.push({ ...d, id, color: d.color ?? this.drawingColor, points: d.points.map((q) => ({ ...q })) });
+    this.drawingsChanged();
+    return id;
+  }
+
+  /** Changes a drawing's colour, width, style or lock. */
+  updateDrawing(id: string, patch: Partial<Pick<Drawing, "color" | "width" | "style" | "locked">>): void {
+    const d = this.drawingList.find((x) => x.id === id);
+    if (!d) return;
+    Object.assign(d, patch);
+    this.drawingsChanged();
+  }
+  removeDrawing(id: string): void {
+    const n = this.drawingList.length;
+    this.drawingList = this.drawingList.filter((d) => d.id !== id);
+    if (this.selectedId === id) this.select(null);
+    if (this.drawingList.length !== n) this.drawingsChanged();
+  }
+  clearDrawings(): void { this.drawingList = []; this.select(null); this.drawingsChanged(); }
+  get selectedDrawing(): Drawing | null { return this.drawingList.find((d) => d.id === this.selectedId) ?? null; }
+
+  private select(id: string | null): void {
+    if (id === this.selectedId) return;
+    this.selectedId = id;
+    this.emit("drawingselect", this.selectedDrawing);
+    this.markDirty();
+  }
+  private drawingsChanged(): void { this.emit("drawingschange", this.drawings); this.markDirty(); }
 
   // ================================================================ public API: view
 
@@ -590,9 +659,11 @@ export class Chart {
     this.drawSeries();
     this.drawMainIndicators();
     this.drawOverlays();
+    this.drawDrawings(dec);
     this.drawLivePoint(now);
     ctx.restore();
     this.drawPanes();
+    this.drawDrawingTags(dec);
 
     // axis lines
     ctx.strokeStyle = th.axisLine;
@@ -1146,6 +1217,134 @@ export class Chart {
     this.markDirty();
   }
 
+  // ================================================================ drawings: placing, hit testing, drawing
+
+  private toPoint(p: { x: number; y: number }): DrawingPoint { return { time: this.xToTime(p.x), price: this.yToPrice(p.y) }; }
+  private toXY(q: DrawingPoint): { x: number; y: number } { return { x: this.timeToX(q.time), y: this.priceToY(q.price) }; }
+
+  private placePoint(p: { x: number; y: number }): void {
+    const pl = this.placing!;
+    pl.points.push(this.toPoint(p));
+    if (pl.points.length >= POINTS_NEEDED[pl.tool]) {
+      const id = "dr" + this.nextId++;
+      this.drawingList.push({ id, tool: pl.tool, points: pl.points, color: this.drawingColor, width: 1.5, style: "solid" });
+      this.tool = null;
+      this.placing = null;
+      this.emit("toolchange", null);
+      this.drawingsChanged();
+      this.select(id);
+    }
+    this.markDirty();
+  }
+
+  private fibYs(d: Drawing): number[] {
+    return d.tool === "fib" ? FIB_LEVELS.map((l) => this.priceToY(fibPrice(d.points[0], d.points[1], l))) : [];
+  }
+
+  /** The drawing under the pointer, and which handle (or -1 for the body). Topmost first. */
+  private drawingAt(p: { x: number; y: number }): { id: string; handle: number } | null {
+    for (let i = this.drawingList.length - 1; i >= 0; i--) {
+      const d = this.drawingList[i];
+      const pts = d.points.map((q) => this.toXY(q));
+      if (d.id === this.selectedId) {
+        const h = pts.findIndex((q) => Math.hypot(q.x - p.x, q.y - p.y) <= 8);
+        if (h >= 0) return { id: d.id, handle: h };
+      }
+      if (distToDrawing(d.tool, pts, p, this.plotW(), this.mainH(), this.fibYs(d)) <= 6) return { id: d.id, handle: -1 };
+    }
+    return null;
+  }
+
+  private moveDrawing(p: { x: number; y: number }): void {
+    const dd = this.drawDrag!;
+    const d = this.drawingList.find((x) => x.id === dd.id);
+    if (!d) return;
+    if (Math.hypot(p.x - dd.start.x, p.y - dd.start.y) > 2) dd.moved = true;
+    const dt = (p.x - dd.start.x) * this.msPerPx;
+    const dp = this.yToPrice(p.y) - this.yToPrice(dd.start.y);
+    d.points = dd.orig.map((q, i) => (dd.handle === -1 || dd.handle === i ? { time: q.time + dt, price: q.price + dp } : { ...q }));
+    this.markDirty();
+  }
+
+  private drawDrawings(dec: number): void {
+    const { ctx, theme: th } = this;
+    const pw = this.plotW(), mh = this.mainH();
+    const list: Drawing[] = [...this.drawingList];
+    if (this.placing && this.placing.points.length && this.placing.hover) {
+      list.push({ id: "_preview", tool: this.placing.tool, points: [...this.placing.points, this.placing.hover], color: this.drawingColor, width: 1.5, style: "dashed" });
+    }
+    for (const d of list) {
+      const pts = d.points.map((q) => this.toXY(q));
+      ctx.strokeStyle = d.color;
+      ctx.lineWidth = d.width ?? 1.5;
+      ctx.setLineDash(dash(d.style ?? "solid"));
+      ctx.beginPath();
+      switch (d.tool) {
+        case "line": ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y); break;
+        case "trend": { const e = rayEnd(pts[0], pts[1], pw, mh); ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(e.x, e.y); break; }
+        case "horizontal": ctx.moveTo(0, crisp(pts[0].y)); ctx.lineTo(pw, crisp(pts[0].y)); break;
+        case "vertical": ctx.moveTo(crisp(pts[0].x), 0); ctx.lineTo(crisp(pts[0].x), mh); break;
+        case "fib": {
+          const left = Math.min(pts[0].x, pts[1].x);
+          ctx.setLineDash([3, 4]);
+          ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const ys = FIB_LEVELS.map((l) => this.priceToY(fibPrice(d.points[0], d.points[1], l)));
+          // soft fill between 38.2 % and 61.8 %
+          ctx.fillStyle = withAlpha(d.color, 0.07);
+          ctx.fillRect(left, Math.min(ys[2], ys[4]), pw - left, Math.abs(ys[4] - ys[2]));
+          ctx.beginPath();
+          ys.forEach((y) => { ctx.moveTo(left, crisp(y)); ctx.lineTo(pw, crisp(y)); });
+          ctx.stroke();
+          ctx.font = `10px ${th.monoFont}`;
+          ctx.fillStyle = d.color;
+          ctx.textAlign = "left";
+          ctx.textBaseline = "bottom";
+          FIB_LEVELS.forEach((l, i) => ctx.fillText(`${(l * 100).toFixed(1)}%  ${formatPrice(fibPrice(d.points[0], d.points[1], l), dec)}`, left + 4, ys[i] - 2));
+          ctx.beginPath();
+          break;
+        }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // handles on the selected drawing (and on the points placed so far)
+      if (d.id === this.selectedId || d.id === "_preview") {
+        for (const q of pts) {
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = th.background;
+          ctx.fill();
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = d.color;
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  /** Price tags for horizontal lines, and price/time tags for the selected drawing's points. */
+  private drawDrawingTags(dec: number): void {
+    const { ctx } = this;
+    const tag = (text: string, x: number, y: number, color: string, align: "left" | "center") =>
+      pill(ctx, text, x, y, { bg: color, fg: "#fff", font: `11px ${this.theme.monoFont}`, align, width: align === "left" ? this.axisW - 8 : 0 });
+    for (const d of this.drawingList) {
+      const sel = d.id === this.selectedId;
+      if (d.tool === "horizontal" || sel) {
+        for (const q of d.tool === "vertical" ? [] : d.points) {
+          const y = this.priceToY(q.price);
+          if (y > 0 && y < this.mainH()) tag(formatPrice(q.price, dec), this.plotW() + 4, y, d.color, "left");
+        }
+      }
+      if (sel && d.tool !== "horizontal") {
+        for (const q of d.points) {
+          const x = this.timeToX(q.time);
+          if (x > 0 && x < this.plotW()) tag(formatTime(q.time, "full", this.tz(q.time)).slice(5, 16), x, this.plotH() + AXIS_H / 2, d.color, "center");
+        }
+      }
+    }
+  }
+
   // ================================================================ input
 
   private local(e: PointerEvent | WheelEvent | MouseEvent): { x: number; y: number } {
@@ -1185,6 +1384,18 @@ export class Chart {
         return;
       }
       if (this.hitAt(p)) return;
+      if (p.x <= this.plotW() && p.y < this.mainH()) {
+        if (this.placing) { this.placePoint(p); return; }
+        const found = this.drawingAt(p);
+        if (found) {
+          this.select(found.id);
+          const d = this.selectedDrawing!;
+          if (!d.locked) this.drawDrag = { id: d.id, handle: found.handle, start: p, orig: d.points.map((q) => ({ ...q })), moved: false };
+          this.markDirty();
+          return;
+        }
+        if (this.selectedId) this.select(null);
+      }
       if (p.x <= this.plotW()) this.drag = { x: p.x, rightTime: this.rightTime, moved: false, id: e.pointerId };
       this.pointer = e.pointerType === "mouse" ? p : null;
       this.markDirty();
@@ -1208,7 +1419,10 @@ export class Chart {
         this.resizePanes(p.y);
         return;
       }
-      if (!this.drag) c.style.cursor = this.dividerAt(p) > 0 ? "row-resize" : this.hitAt(p) ? "pointer" : "crosshair";
+      if (this.drawDrag) { this.moveDrawing(p); return; }
+      if (this.placing) { this.placing.hover = this.toPoint(p); this.pointer = p; this.markDirty(); }
+      if (!this.drag) c.style.cursor = this.dividerAt(p) > 0 ? "row-resize" : this.hitAt(p) ? "pointer"
+        : !this.placing && this.drawingAt(p) ? "move" : "crosshair";
       if (this.drag && this.drag.id === e.pointerId) {
         const dx = p.x - this.drag.x;
         if (Math.abs(dx) > 3) this.drag.moved = true;
@@ -1226,6 +1440,7 @@ export class Chart {
     const end = (e: PointerEvent) => {
       this.touches.delete(e.pointerId);
       if (this.paneDrag) { this.paneDrag = null; c.style.cursor = "crosshair"; this.markDirty(); return; }
+      if (this.drawDrag) { const moved = this.drawDrag.moved; this.drawDrag = null; if (moved) this.drawingsChanged(); return; }
       const hit = this.drag?.moved ? null : this.hitAt(this.local(e));
       if (hit) { this.drag = null; hit.run(); this.markDirty(); return; }
       if (this.touches.size < 2) this.pinch = null;
@@ -1274,6 +1489,14 @@ export class Chart {
         case "-": case "_": this.zoomOut(); break;
         case "End": this.goLive(); break;
         case "Home": this.fitContent(); break;
+        case "Escape":
+          if (this.placing || this.tool) this.setDrawingTool(null);
+          else if (this.selectedId) this.select(null);
+          else handled = false;
+          break;
+        case "Delete": case "Backspace":
+          if (this.selectedId) this.removeDrawing(this.selectedId); else handled = false;
+          break;
         default: handled = false;
       }
       if (handled) { e.preventDefault(); this.markDirty(); }

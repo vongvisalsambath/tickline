@@ -7,6 +7,8 @@ export { TradeChartElement, defineTradeChart } from "./element";
 export { DARK, LIGHT, CSS_VARS } from "./theme";
 export { parseTimeframe, bucketStart } from "./time";
 export { heikinAshi } from "./data";
+export { FIB_LEVELS, TOOL_NAMES } from "./drawings";
+export type { Drawing, DrawingTool, DrawingPoint } from "./drawings";
 export type * from "./types";
 
 import { defineTradeChart } from "./element";

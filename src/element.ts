@@ -2,9 +2,10 @@
 import { Chart, type ChartEvents, type ChartOptions } from "./chart";
 import { DARK, LIGHT, resolveTheme } from "./theme";
 import { parseIndicatorList } from "./indicators";
+import { TOOL_NAMES, type Drawing, type DrawingTool } from "./drawings";
 import type { Candle, ChartType, MarkerOptions, PriceLineOptions, Tick, TimeLineOptions, ZoneOptions } from "./types";
 
-const ATTRS = ["type", "timeframe", "theme", "precision", "symbol", "fps", "countdown", "price-line", "timezone", "right-padding", "controls", "indicators"] as const;
+const ATTRS = ["type", "timeframe", "theme", "precision", "symbol", "fps", "countdown", "price-line", "timezone", "right-padding", "controls", "indicators", "drawing-tools"] as const;
 
 const STYLE = `
 :host { display: block; position: relative; height: 420px; min-height: 160px; contain: content; }
@@ -24,9 +25,35 @@ button:focus-visible { outline: 2px solid var(--tl-accent, var(--_accent)); outl
   font: 500 12px system-ui, sans-serif; color: #fff; background: rgba(15, 18, 26, .92); opacity: 0; transition: opacity .2s, transform .2s;
   pointer-events: none; white-space: nowrap; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
-:host([controls="none"]) .controls, :host([controls="none"]) .live { display: none !important; }
+.tools { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; }
+.tools button { width: 30px; min-width: 0; padding: 0; display: grid; place-items: center; opacity: .8; }
+.tools button:hover, .tools button[aria-pressed="true"] { opacity: 1; }
+.tools button[aria-pressed="true"] { color: var(--tl-accent-text, #fff); background: var(--tl-accent, var(--_accent)); border-color: transparent; }
+.tools svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.selbar { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); display: none; gap: 6px; align-items: center; padding: 5px 6px;
+  border-radius: 9px; background: color-mix(in srgb, var(--tl-background, var(--_bg)) 88%, transparent);
+  border: 1px solid var(--tl-axis-line, var(--_line)); backdrop-filter: blur(6px); }
+.selbar.show { display: flex; }
+.swatch { width: 18px; min-width: 0; height: 18px; padding: 0; border-radius: 50%; border: 2px solid transparent; }
+.swatch[aria-pressed="true"] { border-color: var(--tl-text-strong, var(--_fg)); }
+.selbar .del { height: 24px; font-weight: 600; font-size: 12px; }
+:host([controls="none"]) .controls, :host([controls="none"]) .live, :host([controls="none"]) .tools,
+:host([drawing-tools="false"]) .tools { display: none !important; }
+@media (max-width: 420px) { .tools { top: auto; bottom: 36px; transform: none; flex-direction: row; } }
 @media (prefers-reduced-motion: reduce) { .controls, .toast { transition: none; } }
 `;
+
+const ICONS: Record<DrawingTool, string> = {
+  line: '<path d="M3 13L13 3"/><circle cx="3" cy="13" r="1.4"/><circle cx="13" cy="3" r="1.4"/>',
+  trend: '<path d="M2 14L14 4"/><circle cx="5" cy="11.5" r="1.4"/>',
+  horizontal: '<path d="M2 8h12"/><circle cx="8" cy="8" r="1.4"/>',
+  vertical: '<path d="M8 2v12"/><circle cx="8" cy="8" r="1.4"/>',
+  fib: '<path d="M2 3h12M2 6.5h12M2 9.5h12M2 13h12" stroke-dasharray="0"/><path d="M3 13L13 3" stroke-dasharray="1.5 2"/>',
+};
+const TOOL_BUTTONS = (Object.keys(ICONS) as DrawingTool[]).map((t) =>
+  `<button type="button" data-tool="${t}" aria-pressed="false" aria-label="${TOOL_NAMES[t]}" title="${TOOL_NAMES[t]}"><svg viewBox="0 0 16 16" aria-hidden="true">${ICONS[t]}</svg></button>`).join("");
+const COLORS = ["#4c9aff", "#22c38e", "#f0506e", "#f5a524", "#a78bfa", "#e6e9ef"];
+const SWATCHES = COLORS.map((c) => `<button type="button" class="swatch" data-color="${c}" style="background:${c}" aria-label="Colour ${c}" aria-pressed="false"></button>`).join("");
 
 /**
  * <trade-chart type="candles" timeframe="1m" theme="dark" symbol="BTC/USDT"></trade-chart>
@@ -58,9 +85,13 @@ export class TradeChartElement extends HTMLElement {
         <button type="button" data-a="in" aria-label="Zoom in" title="Zoom in (+)">+</button>
       </div>
       <button type="button" class="live" part="live-button" data-a="live" aria-label="Back to live">Live ▸</button>
+      <div class="tools" part="drawing-tools" role="toolbar" aria-label="Drawing tools">${TOOL_BUTTONS}</div>
+      <div class="selbar" part="drawing-bar" role="toolbar" aria-label="Selected drawing">${SWATCHES}
+        <button type="button" class="del" data-del aria-label="Delete drawing" title="Delete (Del)">Delete</button></div>
       <div class="toast" role="status" aria-live="polite"></div>`;
     this.wrap = root.querySelector(".wrap")!;
-    this.wrap.append(root.querySelector(".controls")!, root.querySelector(".live")!, root.querySelector(".toast")!);
+    this.wrap.append(root.querySelector(".controls")!, root.querySelector(".live")!, root.querySelector(".toast")!,
+      root.querySelector(".tools")!, root.querySelector(".selbar")!);
     this.liveBtn = root.querySelector(".live")!;
     this.toast = root.querySelector(".toast")!;
     this.setFallbackColours();
@@ -78,7 +109,8 @@ export class TradeChartElement extends HTMLElement {
 
     const forward = <K extends keyof ChartEvents>(type: K) =>
       this._chart!.on(type, (detail) => this.dispatchEvent(new CustomEvent(`tl-${type}`, { detail, bubbles: true, composed: true })));
-    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange"] as const).forEach(forward);
+    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange", "drawingschange", "drawingselect", "toolchange"] as const).forEach(forward);
+    this.bindDrawingUi(root);
     this.applyIndicatorAttribute();
     this._chart.on("followchange", ({ following }) => this.liveBtn.classList.toggle("show", !following));
     this._chart.on("zoomlimit", ({ minCandles }) => this.showToast(`You're at the closest zoom (${minCandles} candles). Pick a smaller timeframe to see more detail.`));
@@ -126,6 +158,15 @@ export class TradeChartElement extends HTMLElement {
   updateIndicator(key: string, params: Record<string, number> | number[]): void { this.run((c) => c.updateIndicator(key, params)); }
   removeIndicator(key: string): void { this.run((c) => c.removeIndicator(key)); }
   get indicatorList() { return this._chart?.indicatorList ?? []; }
+  /** Starts placing a drawing ("line", "trend", "horizontal", "vertical", "fib"), or stops with null. */
+  setDrawingTool(tool: DrawingTool | null): void { this.run((c) => c.setDrawingTool(tool)); }
+  /** All drawings as plain data (store it as JSON to restore later with setDrawings). */
+  get drawings(): Drawing[] { return this._chart?.drawings ?? []; }
+  setDrawings(list: readonly Drawing[]): void { this.run((c) => c.setDrawings(list)); }
+  addDrawing(d: Parameters<Chart["addDrawing"]>[0]): string { return this.runId((c) => c.addDrawing(d)); }
+  updateDrawing(id: string, patch: Parameters<Chart["updateDrawing"]>[1]): void { this.run((c) => c.updateDrawing(id, patch)); }
+  removeDrawing(id: string): void { this.run((c) => c.removeDrawing(id)); }
+  clearDrawings(): void { this.run((c) => c.clearDrawings()); }
   zoomIn(): void { this._chart?.zoomIn(); }
   zoomOut(): void { this._chart?.zoomOut(); }
   goLive(): void { this._chart?.goLive(); }
@@ -183,6 +224,30 @@ export class TradeChartElement extends HTMLElement {
     this.style.setProperty("--_fg", t.textStrong);
     this.style.setProperty("--_line", t.axisLine);
     this.style.setProperty("--_accent", t.accent);
+  }
+
+  private bindDrawingUi(root: ShadowRoot): void {
+    const c = this._chart!;
+    const toolBtns = [...root.querySelectorAll<HTMLButtonElement>("[data-tool]")];
+    toolBtns.forEach((b) => b.addEventListener("click", () => {
+      const t = b.dataset.tool as DrawingTool;
+      c.setDrawingTool(c.drawingTool === t ? null : t);
+      c.canvas.focus({ preventScroll: true });
+    }));
+    c.on("toolchange", (t) => toolBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === t))));
+    const bar = root.querySelector<HTMLDivElement>(".selbar")!;
+    const swatches = [...root.querySelectorAll<HTMLButtonElement>(".swatch")];
+    c.on("drawingselect", (d) => {
+      bar.classList.toggle("show", !!d);
+      swatches.forEach((sw) => sw.setAttribute("aria-pressed", String(!!d && sw.dataset.color === d.color)));
+    });
+    swatches.forEach((sw) => sw.addEventListener("click", () => {
+      const d = c.selectedDrawing;
+      c.drawingColor = sw.dataset.color!;
+      if (d) c.updateDrawing(d.id, { color: sw.dataset.color! });
+      swatches.forEach((x) => x.setAttribute("aria-pressed", String(x === sw)));
+    }));
+    root.querySelector("[data-del]")!.addEventListener("click", () => { const d = c.selectedDrawing; if (d) c.removeDrawing(d.id); });
   }
 
   private showToast(text: string): void {
