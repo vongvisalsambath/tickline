@@ -8,34 +8,11 @@ import { CandleStore, heikinAshi } from "./data";
 import { autoPrecision, formatPrice, priceTicks, splitEmphasis, stepDecimals, niceStep } from "./price";
 import { formatCountdown, formatTime, parseTimeframe, timeTicks, type ParsedTimeframe, MS } from "./time";
 import { DARK, LIGHT } from "./theme";
+import { applyOptions, cloneOptions, defaultOptions, type ChartOptions, type LineStyle, type ResolvedOptions, type ThemeInput, type TimeLabelKind } from "./options";
 import { getIndicator, resolveParams, type IndicatorDefinition, type IndicatorOutput } from "./indicators";
-import { FIB_LEVELS, POINTS_NEEDED, distToDrawing, fibPrice, rayEnd, type Drawing, type DrawingPoint, type DrawingTool } from "./drawings";
+import { POINTS_NEEDED, distToDrawing, fibPrice, rayEnd, type Drawing, type DrawingPoint, type DrawingTool } from "./drawings";
 
-export interface ChartOptions {
-  type?: ChartType;
-  timeframe?: Timeframe;
-  theme?: "dark" | "light" | Theme;
-  /** Decimals for prices, or "auto" from the data. */
-  precision?: number | "auto";
-  /** Shown in the legend, e.g. "BTC/USDT". */
-  symbol?: string;
-  /** Frame-rate cap while animating (default 60). */
-  fps?: number;
-  /** "local" (default) or a fixed offset from UTC in minutes, e.g. 420 for UTC+7. */
-  timezone?: "local" | number;
-  /** Show the time left in the current candle next to the live price (default true). */
-  countdown?: boolean;
-  /** Live price line across the whole chart, or only from the last candle to the axis (default "short"). */
-  priceLine?: "full" | "short" | "none";
-  /** Empty space to the right of the live candle, as a share of the width (default 0.2). */
-  rightPadding?: number;
-  /** Fewest candles you can zoom in to (default 12). */
-  minVisibleCandles?: number;
-  /** How many trailing digits of the live price are drawn large (default 3). */
-  emphasisDigits?: number;
-  /** Smooth gliding of the live price between ticks (default true; off with reduced motion). */
-  animate?: boolean;
-}
+export type { ChartOptions } from "./options";
 
 type Overlay =
   | { kind: "marker"; o: MarkerOptions }
@@ -68,12 +45,31 @@ export interface IndicatorInfo {
   id: string;
   label: string;
   params: Record<string, number>;
+  style: IndicatorStyle;
   placement: "main" | "pane";
+}
+
+/** Per-indicator look: colours of its lines in order, line width, histogram and band colours, pane height. */
+export interface IndicatorStyle {
+  /** Colours for the indicator's lines, in order (e.g. MACD: [macd, signal]). */
+  colors?: string[];
+  /** Line width in px. */
+  width?: number;
+  /** Histogram bar colours (MACD, volume). */
+  upColor?: string;
+  downColor?: string;
+  /** Fill between bands (Bollinger Bands). */
+  bandColor?: string;
+  /** Reference levels to draw instead of the defaults, e.g. [20, 80] for RSI. */
+  levels?: number[];
+  /** Starting height of its pane, as a share of the chart (pane indicators only). */
+  height?: number;
 }
 
 interface ActiveIndicator {
   def: IndicatorDefinition;
   params: Record<string, number>;
+  style: IndicatorStyle;
   cache: { version: number; out: IndicatorOutput } | null;
   /** Share of the chart height (panes only). */
   frac: number;
@@ -84,16 +80,13 @@ interface Hit { x: number; y: number; w: number; h: number; run: () => void }
 
 type Handler<T> = (e: T) => void;
 
-const AXIS_H = 26;
-const PAD_TOP = 34; // room for the legend
-const PAD_BOTTOM = 10;
 
 export class Chart {
   readonly canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private store: CandleStore;
   private tf: ParsedTimeframe;
-  private opts: Required<Omit<ChartOptions, "theme" | "symbol">> & { symbol: string };
+  private opts: ResolvedOptions;
   private theme: Theme = DARK;
   private overlays = new Map<string, Overlay>();
   private nextId = 1;
@@ -128,8 +121,11 @@ export class Chart {
   private placing: { tool: DrawingTool; points: DrawingPoint[]; hover: DrawingPoint | null } | null = null;
   private selectedId: string | null = null;
   private drawDrag: { id: string; handle: number; start: { x: number; y: number }; orig: DrawingPoint[]; moved: boolean } | null = null;
-  /** Colour for new drawings. */
-  drawingColor = "#4c9aff";
+  /** Colour for new drawings (same as `options.drawings.color`). */
+  get drawingColor(): string { return this.opts.drawings.color; }
+  set drawingColor(c: string) { this.opts.drawings.color = c; }
+  private numberFormats = new Map<string, Intl.NumberFormat>();
+  private dateFormats = new Map<string, Intl.DateTimeFormat>();
 
   // input
   private pointer: { x: number; y: number } | null = null;
@@ -141,20 +137,7 @@ export class Chart {
   private cleanups: (() => void)[] = [];
 
   constructor(private container: HTMLElement, options: ChartOptions = {}) {
-    this.opts = {
-      type: options.type ?? "candles",
-      timeframe: options.timeframe ?? "1m",
-      precision: options.precision ?? "auto",
-      fps: options.fps ?? 60,
-      timezone: options.timezone ?? "local",
-      countdown: options.countdown ?? true,
-      priceLine: options.priceLine ?? "short",
-      rightPadding: options.rightPadding ?? 0.2,
-      minVisibleCandles: options.minVisibleCandles ?? 12,
-      emphasisDigits: options.emphasisDigits ?? 3,
-      animate: options.animate ?? true,
-      symbol: options.symbol ?? "",
-    };
+    this.opts = applyOptions(defaultOptions(), options);
     this.tf = parseTimeframe(this.opts.timeframe);
     this.store = new CandleStore(this.tf);
     this.setTheme(options.theme ?? "dark");
@@ -163,7 +146,7 @@ export class Chart {
     this.canvas.style.cssText = "display:block;width:100%;height:100%;touch-action:none;outline:none;cursor:crosshair";
     this.canvas.tabIndex = 0;
     this.canvas.setAttribute("role", "img");
-    this.canvas.setAttribute("aria-label", "Price chart");
+    this.canvas.setAttribute("aria-label", this.opts.labels.chart);
     container.appendChild(this.canvas);
     const ctx = this.canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas 2D is not available.");
@@ -240,20 +223,39 @@ export class Chart {
   }
   get timeframe(): Timeframe { return this.opts.timeframe; }
 
-  setTheme(theme: "dark" | "light" | Theme): void {
-    this.theme = theme === "light" ? LIGHT : theme === "dark" ? DARK : { ...DARK, ...theme };
-    this.markDirty();
-  }
-
-  setOptions(o: Partial<ChartOptions>): void {
-    if (o.type) this.setType(o.type);
-    if (o.timeframe && o.timeframe !== this.opts.timeframe) this.setTimeframe(o.timeframe);
-    if (o.theme) this.setTheme(o.theme);
-    for (const k of ["precision", "fps", "timezone", "countdown", "priceLine", "rightPadding", "minVisibleCandles", "emphasisDigits", "animate", "symbol"] as const) {
-      if (o[k] !== undefined) (this.opts as Record<string, unknown>)[k] = o[k];
+  /** "dark", "light", a full theme, or overrides on a preset: `{ base: "light", up: "#16a34a" }`. */
+  setTheme(theme: ThemeInput | Theme): void {
+    if (theme === "light" || theme === "dark") this.theme = theme === "light" ? LIGHT : DARK;
+    else {
+      const { base, ...rest } = theme as Partial<Theme> & { base?: "dark" | "light" };
+      const clean = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== ""));
+      this.theme = { ...(base === "light" ? LIGHT : DARK), ...clean };
     }
     this.markDirty();
   }
+  /** The colours and fonts in use. */
+  get currentTheme(): Theme { return { ...this.theme }; }
+
+  /**
+   * Changes any settings. Groups merge with what's set, so `{ grid: { vertical: false } }` changes only that.
+   * See ChartOptions for every setting and its default.
+   */
+  setOptions(o: ChartOptions): void {
+    const prevTf = this.opts.timeframe;
+    this.opts = applyOptions(this.opts, o);
+    if (this.opts.timeframe !== prevTf) {
+      const next = this.opts.timeframe;
+      this.opts.timeframe = prevTf;
+      this.setTimeframe(next);
+    }
+    if (o.theme) this.setTheme(o.theme);
+    if (o.labels?.chart) this.canvas.setAttribute("aria-label", this.opts.labels.chart);
+    if (o.locale !== undefined) { this.numberFormats.clear(); this.dateFormats.clear(); }
+    this.msPerPx = this.msPerPx && Math.min(this.maxMsPerPx(), Math.max(this.minMsPerPx(), this.msPerPx));
+    this.markDirty();
+  }
+  /** A copy of every setting, with defaults filled in. */
+  get options(): ResolvedOptions { return cloneOptions(this.opts); }
 
   // ================================================================ public API: overlays
 
@@ -278,25 +280,28 @@ export class Chart {
    * Adds a built-in or registered indicator: "sma", "ema", "bb", "rsi", "macd", "volume".
    * Params by name ({ period: 14 }) or in order ([12, 26, 9]). Returns a key for update/remove.
    */
-  addIndicator(id: string, params?: Record<string, number> | number[]): string {
+  addIndicator(id: string, params?: Record<string, number> | number[], style: IndicatorStyle = {}): string {
     const def = getIndicator(id.toLowerCase());
     if (!def) throw new Error(`Unknown indicator "${id}".`);
     const key = "ind" + this.nextId++;
-    this.indicators.set(key, { def, params: resolveParams(def, params), cache: null, frac: def.id === "volume" ? 0.16 : 0.22 });
+    const frac = style.height ?? (def.id === "volume" ? Math.min(0.16, this.opts.layout.paneHeight) : this.opts.layout.paneHeight);
+    this.indicators.set(key, { def, params: resolveParams(def, params), style: { ...style }, cache: null, frac });
     this.markDirty();
     return key;
   }
-  updateIndicator(key: string, params: Record<string, number> | number[]): void {
+  /** Changes an indicator's parameters and, optionally, its style (merged). */
+  updateIndicator(key: string, params?: Record<string, number> | number[], style?: IndicatorStyle): void {
     const ind = this.indicators.get(key);
     if (!ind) return;
-    ind.params = resolveParams(ind.def, Array.isArray(params) ? params : { ...ind.params, ...params });
+    if (params) ind.params = resolveParams(ind.def, Array.isArray(params) ? params : { ...ind.params, ...params });
+    if (style) { ind.style = { ...ind.style, ...style }; if (style.height !== undefined) ind.frac = style.height; }
     ind.cache = null;
     this.markDirty();
   }
   removeIndicator(key: string): void { if (this.indicators.delete(key)) this.markDirty(); }
   clearIndicators(): void { this.indicators.clear(); this.markDirty(); }
   get indicatorList(): IndicatorInfo[] {
-    return [...this.indicators.entries()].map(([key, i]) => ({ key, id: i.def.id, label: i.def.label(i.params), params: { ...i.params }, placement: i.def.placement }));
+    return [...this.indicators.entries()].map(([key, i]) => ({ key, id: i.def.id, label: i.def.label(i.params), params: { ...i.params }, style: { ...i.style }, placement: i.def.placement }));
   }
 
   // ================================================================ public API: drawings
@@ -325,7 +330,7 @@ export class Chart {
   /** Adds a drawing in code. Returns its id. */
   addDrawing(d: Omit<Drawing, "id" | "color"> & { color?: string }): string {
     const id = "dr" + this.nextId++;
-    this.drawingList.push({ ...d, id, color: d.color ?? this.drawingColor, points: d.points.map((q) => ({ ...q })) });
+    this.drawingList.push({ width: this.opts.drawings.width, style: this.opts.drawings.style, ...d, id, color: d.color ?? this.drawingColor, points: d.points.map((q) => ({ ...q })) });
     this.drawingsChanged();
     return id;
   }
@@ -356,8 +361,8 @@ export class Chart {
 
   // ================================================================ public API: view
 
-  zoomIn(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.opts.rightPadding : 0.5), 1 / 1.6); }
-  zoomOut(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.opts.rightPadding : 0.5), 1.6); }
+  zoomIn(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.opts.timeScale.rightPadding : 0.5), 1 / this.opts.interaction.zoomStep); }
+  zoomOut(): void { this.zoomAt(this.plotW() * (this.following ? 1 - this.opts.timeScale.rightPadding : 0.5), this.opts.interaction.zoomStep); }
   /** Back to the live edge, following new prices. */
   goLive(): void { this.setFollowing(true); this.markDirty(); }
   get isFollowing(): boolean { return this.following; }
@@ -366,7 +371,7 @@ export class Chart {
     const first = this.store.first, last = this.store.last;
     if (!first || !last) return;
     const span = this.store.endOf(last) - first.time;
-    this.msPerPx = Math.max(this.minMsPerPx(), span / (this.plotW() * (1 - this.opts.rightPadding)));
+    this.msPerPx = Math.max(this.minMsPerPx(), span / (this.plotW() * (1 - this.opts.timeScale.rightPadding)));
     this.setFollowing(true);
     this.markDirty();
   }
@@ -398,7 +403,56 @@ export class Chart {
 
   // ================================================================ internals: data and view
 
-  private get animated(): boolean { return this.opts.animate && !this.reducedMotion; }
+  private get animated(): boolean { return this.opts.animation.enabled && !this.reducedMotion; }
+
+  // ---------------------------------------------------------------- formatting (settings: locale, format.*)
+
+  private fmtPrice(v: number, dec: number): string {
+    const f = this.opts.format.price;
+    if (f) return f(v, dec);
+    if (!this.opts.locale || !Number.isFinite(v)) return formatPrice(v, dec);
+    const key = String(dec);
+    let nf = this.numberFormats.get(key);
+    if (!nf) { nf = new Intl.NumberFormat(this.opts.locale, { minimumFractionDigits: dec, maximumFractionDigits: dec }); this.numberFormats.set(key, nf); }
+    return nf.format(v);
+  }
+
+  private fmtTime(t: number, kind: TimeLabelKind): string {
+    const tz = this.tz(t);
+    if (this.opts.format.time) return this.opts.format.time(t, kind, tz);
+    const full = (k: "seconds" | "minutes" | "date") => {
+      if (!this.opts.locale) {
+        const s = formatTime(t, "full", tz); // 2026-11-03 20:07:15
+        return k === "seconds" ? s : k === "minutes" ? s.slice(0, 16) : s.slice(0, 10);
+      }
+      return this.intlDate(t, tz, "full-" + k, k === "date" ? { dateStyle: "medium" } : { dateStyle: "short", timeStyle: k === "seconds" ? "medium" : "short" });
+    };
+    if (kind === "crosshair") return full(this.tf.ms < MS.MIN ? "seconds" : this.tf.ms < MS.DAY ? "minutes" : "date");
+    if (kind === "drawing") return this.opts.locale ? full("minutes") : formatTime(t, "full", tz).slice(5, 16);
+    if (kind === "full") return full("seconds");
+    if (!this.opts.locale) return formatTime(t, kind, tz);
+    const d = new Date(t + tz * MS.MIN);
+    switch (kind) {
+      case "seconds": return this.intlDate(t, tz, kind, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      case "minutes": return this.intlDate(t, tz, kind, { hour: "2-digit", minute: "2-digit" });
+      case "month": return d.getUTCMonth() === 0 ? String(d.getUTCFullYear()) : this.intlDate(t, tz, kind, { month: "short", year: "numeric" });
+      default: return this.intlDate(t, tz, "day", { day: "numeric", month: "short" });
+    }
+  }
+
+  /** Intl date formatting at a fixed offset: shift the time and format it as UTC. */
+  private intlDate(t: number, tz: number, key: string, o: Intl.DateTimeFormatOptions): string {
+    let f = this.dateFormats.get(key);
+    if (!f) { f = new Intl.DateTimeFormat(this.opts.locale, { ...o, timeZone: "UTC" }); this.dateFormats.set(key, f); }
+    return f.format(new Date(t + tz * MS.MIN));
+  }
+
+  private fmtCountdown(ms: number): string { return this.opts.format.countdown ? this.opts.format.countdown(ms) : formatCountdown(ms); }
+
+  /** A font from the base size: delta px larger or smaller. */
+  private font(delta: number, weight = "", mono = true): string {
+    return `${weight} ${this.opts.layout.fontSize + delta}px ${mono ? this.theme.monoFont : this.theme.font}`.trim();
+  }
 
   private addOverlay(ov: Overlay): string {
     const id = "tl" + this.nextId++;
@@ -442,26 +496,32 @@ export class Chart {
     return !!last && Date.now() - this.store.endOf(last) < 3 * this.tf.ms;
   }
 
+  private axisH(): number { return this.opts.timeScale.visible ? this.opts.layout.timeAxisHeight : 0; }
   private plotW(): number { return Math.max(1, this.w - this.axisW); }
-  private plotH(): number { return Math.max(1, this.h - AXIS_H); }
-  private minMsPerPx(): number { return (this.tf.ms * this.opts.minVisibleCandles) / this.plotW(); }
-  private maxMsPerPx(): number { return (this.tf.ms * 3000) / this.plotW(); }
-  private defaultMsPerPx(): number { return (this.tf.ms * 60) / this.plotW(); } // about 60 candles
+  private plotH(): number { return Math.max(1, this.h - this.axisH()); }
+  private minMsPerPx(): number { return (this.tf.ms * this.opts.timeScale.minVisibleCandles) / this.plotW(); }
+  private maxMsPerPx(): number { return (this.tf.ms * this.opts.timeScale.maxVisibleCandles) / this.plotW(); }
+  private defaultMsPerPx(): number { return (this.tf.ms * this.opts.timeScale.defaultVisibleCandles) / this.plotW(); }
 
   private timeToX(t: number): number { return this.plotW() - (this.rightTime - t) / this.msPerPx; }
   private xToTime(x: number): number { return this.rightTime - (this.plotW() - x) * this.msPerPx; }
   /** Height of the price pane (the rest goes to indicator panes). */
   private mainH(): number { return this.layoutBoxes[0]?.h ?? this.plotH(); }
   /** Room at the top of the price pane for the legend (one more row when price indicators are on). */
-  private padTop(): number { return PAD_TOP + ([...this.indicators.values()].some((i) => i.def.placement === "main") ? 18 : 0); }
+  private padTop(): number {
+    const lg = this.opts.legend;
+    const row = lg.visible && lg.indicators && [...this.indicators.values()].some((i) => i.def.placement === "main");
+    return this.opts.layout.paddingTop + (row ? this.opts.layout.fontSize + 7 : 0);
+  }
 
   private computeLayout(): PaneBox[] {
     const ph = this.plotH();
     const subs = [...this.indicators.entries()].filter(([, i]) => i.def.placement === "pane");
     let fracs = subs.map(([, i]) => i.frac);
     const total = fracs.reduce((a, b) => a + b, 0);
-    if (total > 0.75) fracs = fracs.map((f) => (f * 0.75) / total); // the price pane keeps at least a quarter
-    const heights = fracs.map((f) => Math.max(48, Math.round(f * ph)));
+    const cap = this.opts.layout.paneMaxShare;
+    if (total > cap) fracs = fracs.map((f) => (f * cap) / total); // the price pane keeps the rest
+    const heights = fracs.map((f) => Math.max(this.opts.layout.paneMinHeight, Math.round(f * ph)));
     const mainH = Math.max(80, ph - heights.reduce((a, b) => a + b, 0));
     const boxes: PaneBox[] = [{ key: null, top: 0, h: mainH }];
     let top = mainH;
@@ -470,11 +530,11 @@ export class Chart {
   }
 
   private priceToY(p: number): number {
-    const top = this.padTop(), bottom = this.mainH() - PAD_BOTTOM;
+    const top = this.padTop(), bottom = this.mainH() - this.opts.layout.paddingBottom;
     return bottom - ((p - this.priceMin) / (this.priceMax - this.priceMin || 1)) * (bottom - top);
   }
   private yToPrice(y: number): number {
-    const top = this.padTop(), bottom = this.mainH() - PAD_BOTTOM;
+    const top = this.padTop(), bottom = this.mainH() - this.opts.layout.paddingBottom;
     return this.priceMin + ((bottom - y) / (bottom - top)) * (this.priceMax - this.priceMin);
   }
 
@@ -489,7 +549,7 @@ export class Chart {
     const anchor = this.xToTime(x);
     const next = this.msPerPx * factor;
     const min = this.minMsPerPx(), max = this.maxMsPerPx();
-    if (factor < 1 && this.msPerPx <= min * 1.001) { this.emit("zoomlimit", { minCandles: this.opts.minVisibleCandles }); return; }
+    if (factor < 1 && this.msPerPx <= min * 1.001) { this.emit("zoomlimit", { minCandles: this.opts.timeScale.minVisibleCandles }); return; }
     this.msPerPx = Math.min(max, Math.max(min, next));
     if (!this.following) this.rightTime = anchor + (this.plotW() - x) * this.msPerPx;
     this.markDirty();
@@ -539,18 +599,18 @@ export class Chart {
     // live price glides towards the last tick
     if (last) {
       if (!Number.isFinite(this.displayPrice) || !this.animated) this.displayPrice = last.close;
-      else this.displayPrice += (last.close - this.displayPrice) * (1 - Math.exp(-dt / 110));
+      else this.displayPrice += (last.close - this.displayPrice) * (1 - Math.exp(-dt / Math.max(1, this.opts.animation.priceSmoothing)));
       if (Math.abs(last.close - this.displayPrice) < Math.abs(last.close) * 1e-9) this.displayPrice = last.close;
     }
     // the view follows the live edge, with empty space on the right
-    if (this.following) this.rightTime = this.liveTime() + this.plotW() * this.opts.rightPadding * this.msPerPx;
+    if (this.following) this.rightTime = this.liveTime() + this.plotW() * this.opts.timeScale.rightPadding * this.msPerPx;
     // price axis fits the visible candles, easing so it never jumps
     const target = this.visibleExtent();
     if (target) {
       const [lo, hi] = target;
       if (!this.scaleReady || !this.animated) { this.priceMin = lo; this.priceMax = hi; this.scaleReady = true; }
       else {
-        const k = 1 - Math.exp(-dt / 140);
+        const k = 1 - Math.exp(-dt / Math.max(1, this.opts.animation.scaleSmoothing));
         this.priceMin += (lo - this.priceMin) * k;
         this.priceMax += (hi - this.priceMax) * k;
       }
@@ -558,7 +618,7 @@ export class Chart {
     // history: ask for more when the left edge nears the first candle
     const first = this.store.first;
     const leftTime = this.xToTime(0);
-    if (first && leftTime < first.time + this.plotW() * 0.25 * this.msPerPx && this.historyRequestedFor !== first.time) {
+    if (first && this.opts.history.request && leftTime < first.time + this.plotW() * this.opts.history.threshold * this.msPerPx && this.historyRequestedFor !== first.time) {
       this.historyRequestedFor = first.time;
       this.emit("requesthistory", { before: first.time });
     }
@@ -603,7 +663,7 @@ export class Chart {
       lo = Math.min(lo, this.displayPrice); hi = Math.max(hi, this.displayPrice);
     }
     for (const ind of this.indicators.values()) {
-      if (ind.def.placement !== "main") continue;
+      if (ind.def.placement !== "main" || !this.opts.priceScale.includeIndicators) continue;
       const out = this.output(ind);
       for (const line of out.lines) for (let i = from; i < to; i++) {
         const v = line.values[i];
@@ -616,7 +676,7 @@ export class Chart {
       lo = last.low; hi = last.high;
     }
     if (hi - lo < Math.abs(hi) * 1e-6) { const pad = Math.abs(hi) * 0.001 || 1; lo -= pad; hi += pad; }
-    const pad = (hi - lo) * 0.08;
+    const pad = (hi - lo) * Math.max(0, this.opts.priceScale.margin);
     return [lo - pad, hi + pad];
   }
 
@@ -631,24 +691,25 @@ export class Chart {
     if (!this.msPerPx) return;
 
     // axis width from the widest label
-    ctx.font = `11px ${th.monoFont}`;
-    const sample = formatPrice(Math.max(Math.abs(this.priceMax), Math.abs(this.priceMin)), dec);
-    this.axisW = Math.max(64, Math.ceil(ctx.measureText(sample).width + 34));
+    ctx.font = this.font(0);
+    const sample = this.fmtPrice(Math.max(Math.abs(this.priceMax), Math.abs(this.priceMin)), dec);
+    this.axisW = this.opts.priceScale.visible ? Math.max(this.opts.layout.priceAxisMinWidth, Math.ceil(ctx.measureText(sample).width + 34)) : 0;
     const pw = this.plotW(), ph = this.plotH();
     this.layoutBoxes = this.computeLayout();
     this.hits = [];
     const mh = this.mainH();
 
     // grid + axes
-    const pTicks = priceTicks(this.priceMin, this.priceMax, Math.max(2, Math.floor((mh - this.padTop()) / 64)));
+    const pTicks = priceTicks(this.priceMin, this.priceMax, Math.max(2, Math.floor((mh - this.padTop()) / Math.max(16, this.opts.priceScale.labelSpacing))));
     const pStep = pTicks.length > 1 ? pTicks[1] - pTicks[0] : niceStep(this.priceMax - this.priceMin, 4);
     const left = this.xToTime(0), right = this.xToTime(pw);
-    const tTicks = timeTicks(left, right, 110 * this.msPerPx, this.tz(right));
+    const tTicks = timeTicks(left, right, Math.max(20, this.opts.timeScale.labelSpacing) * this.msPerPx, this.tz(right));
+    if (this.opts.format.time || this.opts.locale) for (const t of tTicks) t.label = this.fmtTime(t.time, t.kind);
     ctx.lineWidth = 1;
     ctx.strokeStyle = th.grid;
     ctx.beginPath();
-    for (const p of pTicks) { const y = crisp(this.priceToY(p)); if (y < mh) { ctx.moveTo(0, y); ctx.lineTo(pw, y); } }
-    for (const t of tTicks) { const x = crisp(this.timeToX(t.time)); ctx.moveTo(x, 0); ctx.lineTo(x, ph); }
+    if (this.opts.grid.horizontal) for (const p of pTicks) { const y = crisp(this.priceToY(p)); if (y < mh) { ctx.moveTo(0, y); ctx.lineTo(pw, y); } }
+    if (this.opts.grid.vertical) for (const t of tTicks) { const x = crisp(this.timeToX(t.time)); ctx.moveTo(x, 0); ctx.lineTo(x, ph); }
     ctx.stroke();
 
     ctx.save();
@@ -674,23 +735,23 @@ export class Chart {
 
     // price labels
     ctx.fillStyle = th.text;
-    ctx.font = `11px ${th.monoFont}`;
+    ctx.font = this.font(0);
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
     const labelDec = Math.max(stepDecimals(pStep), 0);
-    for (const p of pTicks) {
+    if (this.opts.priceScale.visible) for (const p of pTicks) {
       const y = this.priceToY(p);
       if (y < 8 || y > mh - 8) continue;
-      ctx.fillText(formatPrice(p, Math.min(dec, labelDec)), pw + 10, y);
+      ctx.fillText(this.fmtPrice(p, Math.min(dec, labelDec)), pw + 10, y);
     }
     // time labels
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    for (const t of tTicks) {
+    if (this.opts.timeScale.visible) for (const t of tTicks) {
       const x = this.timeToX(t.time);
       if (x < 24 || x > pw - 24) continue;
       ctx.fillStyle = t.major ? th.textStrong : th.text;
-      ctx.fillText(t.label, x, ph + AXIS_H / 2);
+      ctx.fillText(t.label, x, ph + this.axisH() / 2);
     }
 
     this.drawPriceLineLabels(dec);
@@ -730,14 +791,15 @@ export class Chart {
       ctx.beginPath();
       pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
       ctx.strokeStyle = th.line;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = this.opts.series.lineWidth;
       ctx.lineJoin = "round";
       ctx.stroke();
       return;
     }
 
-    const bodyW = Math.max(1, Math.min(candlePx * 0.72, candlePx - 1));
+    const bodyW = Math.max(1, Math.min(candlePx * this.opts.series.candleWidth, candlePx - 1));
     const thin = bodyW < 3;
+    const wicks = this.opts.series.wicks;
     for (const dir of [1, -1]) {
       ctx.fillStyle = ctx.strokeStyle = dir > 0 ? th.up : th.down;
       ctx.lineWidth = 1;
@@ -759,8 +821,7 @@ export class Chart {
         const x = crisp(cx);
         const top = Math.min(yO, yC), bh = Math.max(1, Math.abs(yC - yO));
         // wick (skip the part behind the body)
-        ctx.moveTo(x, yH); ctx.lineTo(x, top);
-        ctx.moveTo(x, top + bh); ctx.lineTo(x, yL);
+        if (wicks || thin) { ctx.moveTo(x, yH); ctx.lineTo(x, top); ctx.moveTo(x, top + bh); ctx.lineTo(x, yL); }
         if (thin) { ctx.moveTo(x, top); ctx.lineTo(x, top + bh); continue; }
         if (type === "hollow" && up) ctx.rect(Math.round(cx - bodyW / 2) + 0.5, Math.round(top) + 0.5, Math.round(bodyW) - 1, Math.max(1, Math.round(bh) - 1));
       }
@@ -817,8 +878,8 @@ export class Chart {
         ctx.setLineDash(dash(o.style ?? "solid"));
         ctx.beginPath(); ctx.moveTo(x, this.padTop() - 8); ctx.lineTo(x, ph); ctx.stroke();
         ctx.setLineDash([]);
-        const parts = [o.label, o.countdown ? formatCountdown(o.time - Date.now()) : ""].filter(Boolean).join("  ");
-        if (parts) pill(ctx, parts, x, this.padTop() - 18, { bg: color, fg: th.background, font: `600 11px ${th.monoFont}`, align: "center", within: [4, pw - 4] });
+        const parts = [o.label, o.countdown ? this.fmtCountdown(o.time - Date.now()) : ""].filter(Boolean).join("  ");
+        if (parts) pill(ctx, parts, x, this.padTop() - 18, { bg: color, fg: th.background, font: this.font(0, "600"), align: "center", within: [4, pw - 4] });
       }
     }
     for (const ov of this.overlays.values()) {
@@ -835,7 +896,7 @@ export class Chart {
       ctx.strokeStyle = color; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, ly + (up ? -9 : 9)); ctx.stroke();
       const text = (o.side === "buy" ? "▲ " : o.side === "sell" ? "▼ " : "") + (o.text ?? "");
-      pill(ctx, text.trim() || "•", x, ly, { bg: color, fg: "#fff", font: `600 11px ${th.font}`, align: "center" });
+      pill(ctx, text.trim() || "•", x, ly, { bg: color, fg: th.overlayText, font: this.font(0, "600", false), align: "center" });
     }
   }
 
@@ -847,10 +908,10 @@ export class Chart {
       const y = this.priceToY(o.price);
       if (y < 0 || y > this.mainH()) continue;
       const color = o.color ?? th.accent;
-      if (o.axisLabel !== false) pill(ctx, formatPrice(o.price, dec), this.plotW() + 4, y, { bg: color, fg: "#fff", font: `11px ${th.monoFont}`, align: "left", width: this.axisW - 8 });
+      if (o.axisLabel !== false && this.opts.priceScale.visible) pill(ctx, this.fmtPrice(o.price, dec), this.plotW() + 4, y, { bg: color, fg: th.overlayText, font: this.font(0), align: "left", width: this.axisW - 8 });
       if (o.label) {
         const x = o.from !== undefined ? Math.max(6, this.timeToX(o.from) + 6) : 8;
-        pill(ctx, o.label, x, y - 11, { bg: color, fg: "#fff", font: `600 10px ${th.font}`, align: "left" });
+        pill(ctx, o.label, x, y - 11, { bg: color, fg: th.overlayText, font: this.font(-1, "600", false), align: "left" });
       }
     }
   }
@@ -864,20 +925,21 @@ export class Chart {
     const x = lineType ? this.timeToX(this.liveTime()) : this.timeToX(last.time + this.tf.ms / 2);
     const color = th.accent;
     // price line
-    if (this.opts.priceLine !== "none") {
+    const lp = this.opts.lastPrice;
+    if (lp.line !== "none") {
       ctx.strokeStyle = color;
       ctx.globalAlpha = 0.75;
       ctx.lineWidth = 1;
       ctx.setLineDash([1, 3]);
       ctx.beginPath();
-      ctx.moveTo(this.opts.priceLine === "full" ? 0 : x, crisp(y));
+      ctx.moveTo(lp.line === "full" ? 0 : x, crisp(y));
       ctx.lineTo(this.plotW(), crisp(y));
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
     }
     // glow dot, pulsing while live
-    if (this.isLive()) {
+    if (this.isLive() && lp.pulse) {
       const pulse = this.animated ? (Math.sin(now / 420) + 1) / 2 : 0.5;
       const r = 10 + pulse * 6;
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
@@ -887,21 +949,21 @@ export class Chart {
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = color;
       ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
-      // time left in the candle
-      if (this.opts.countdown && this.tf.ms >= 2000) {
-        const left = this.store.endOf(last) - Date.now();
-        if (left > 0) pill(ctx, formatCountdown(left), x + (lineType ? 12 : Math.max(10, this.tf.ms / this.msPerPx / 2 + 6)), y - 14,
-          { bg: withAlpha(th.background, 0.85), fg: th.textStrong, font: `11px ${th.monoFont}`, align: "left", border: th.axisLine });
-      }
+    }
+    // time left in the candle
+    if (this.isLive() && lp.countdown && this.tf.ms >= 2000) {
+      const left = this.store.endOf(last) - Date.now();
+      if (left > 0) pill(ctx, this.fmtCountdown(left), x + (lineType ? 12 : Math.max(10, this.tf.ms / this.msPerPx / 2 + 6)), y - 14,
+        { bg: withAlpha(th.background, 0.85), fg: th.textStrong, font: this.font(0), align: "left", border: th.axisLine });
     }
   }
 
   private drawLiveTag(dec: number): void {
     const { ctx, theme: th } = this;
-    if (!this.store.last || !Number.isFinite(this.displayPrice)) return;
+    if (!this.store.last || !Number.isFinite(this.displayPrice) || !this.opts.lastPrice.tag || !this.opts.priceScale.visible) return;
     const y = Math.min(this.mainH() - 10, Math.max(10, this.priceToY(this.displayPrice)));
     const shown = this.store.last.close; // the tag shows the real last price; only the line glides
-    const [head, tail] = splitEmphasis(formatPrice(shown, dec), this.opts.emphasisDigits);
+    const [head, tail] = splitEmphasis(this.fmtPrice(shown, dec), this.opts.lastPrice.emphasisDigits);
     const x = this.plotW() + 1, w = this.axisW - 2, h = 22;
     ctx.fillStyle = th.accent;
     ctx.beginPath();
@@ -914,108 +976,116 @@ export class Chart {
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
     ctx.fillStyle = th.accentText;
-    ctx.font = `11px ${th.monoFont}`;
+    ctx.font = this.font(0);
     const hw = ctx.measureText(head).width;
-    ctx.font = `700 13px ${th.monoFont}`;
+    ctx.font = this.font(2, "700");
     const tw = ctx.measureText(tail).width;
     const startX = x + 6 + Math.max(4, (w - 6 - hw - tw) / 2);
-    ctx.font = `11px ${th.monoFont}`;
+    ctx.font = this.font(0);
     ctx.globalAlpha = 0.85;
     ctx.fillText(head, startX, y + 0.5);
     ctx.globalAlpha = 1;
-    ctx.font = `700 13px ${th.monoFont}`;
+    ctx.font = this.font(2, "700");
     ctx.fillText(tail, startX + hw, y + 0.5);
   }
 
   private drawCrosshair(dec: number): void {
     const p = this.pointer;
-    if (!p || this.drag?.moved) return;
+    const ch = this.opts.crosshair;
+    if (!p || this.drag?.moved || ch.mode === "hidden") return;
     const { ctx, theme: th } = this;
     const pw = this.plotW(), ph = this.plotH();
     if (p.x < 0 || p.x > pw || p.y < 0 || p.y > ph) return;
     const t = this.xToTime(p.x);
     const c = this.store.candleAt(t);
-    const snapX = c ? this.timeToX(c.time + this.tf.ms / 2) : p.x;
+    const snapX = c && ch.mode === "snap" ? this.timeToX(c.time + this.tf.ms / 2) : p.x;
     ctx.strokeStyle = th.crosshair;
     ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
+    ctx.setLineDash(ch.style === "dashed" ? [4, 4] : dash(ch.style));
     ctx.beginPath();
     ctx.moveTo(crisp(snapX), 0); ctx.lineTo(crisp(snapX), ph);
     ctx.moveTo(0, crisp(p.y)); ctx.lineTo(pw, crisp(p.y));
     ctx.stroke();
     ctx.setLineDash([]);
+    if (!ch.labels) return;
     const box = this.layoutBoxes.find((b) => p.y >= b.top && p.y < b.top + b.h);
-    const value = !box || box.key === null ? formatPrice(this.yToPrice(p.y), dec) : this.paneValueLabel(box, p.y);
-    pill(ctx, value, pw + 4, p.y, { bg: th.pillBackground, fg: th.pillText, font: `11px ${th.monoFont}`, align: "left", width: this.axisW - 8 });
-    const at = c ? c.time : t;
-    const full = formatTime(at, "full", this.tz(at)); // 2026-11-03 20:07:15
-    const tLabel = this.tf.ms < MS.MIN ? full : this.tf.ms < MS.DAY ? full.slice(0, 16) : full.slice(0, 10);
-    pill(ctx, tLabel, snapX, ph + AXIS_H / 2, { bg: th.pillBackground, fg: th.pillText, font: `11px ${th.monoFont}`, align: "center" });
+    const value = !box || box.key === null ? this.fmtPrice(this.yToPrice(p.y), dec) : this.paneValueLabel(box, p.y);
+    if (this.opts.priceScale.visible) pill(ctx, value, pw + 4, p.y, { bg: th.pillBackground, fg: th.pillText, font: this.font(0), align: "left", width: this.axisW - 8 });
+    const at = c && ch.mode === "snap" ? c.time : t;
+    if (this.opts.timeScale.visible) pill(ctx, this.fmtTime(at, "crosshair"), snapX, ph + this.axisH() / 2, { bg: th.pillBackground, fg: th.pillText, font: this.font(0), align: "center" });
   }
 
   /** Top-left: symbol, timeframe, and the hovered (or last) candle's values. */
   private drawLegend(dec: number): void {
     const { ctx, theme: th } = this;
+    const lg = this.opts.legend, L = this.opts.labels;
+    if (!lg.visible) return;
     const hovered = this.pointer && !this.drag?.moved && this.pointer.x <= this.plotW() ? this.store.candleAt(this.xToTime(this.pointer.x)) : null;
     const c = hovered ?? this.store.last;
     let x = 12;
     const y = 18;
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
-    if (this.opts.symbol) {
-      ctx.font = `600 13px ${th.font}`;
-      ctx.fillStyle = th.textStrong;
-      ctx.fillText(this.opts.symbol, x, y);
-      x += ctx.measureText(this.opts.symbol).width + 8;
-    }
-    ctx.font = `12px ${th.font}`;
-    ctx.fillStyle = th.text;
-    ctx.fillText(this.opts.timeframe, x, y);
-    x += ctx.measureText(this.opts.timeframe).width + 14;
-    if (!c) return;
-    const close = hovered ? c.close : this.store.last!.close;
-    const color = close >= c.open ? th.up : th.down;
-    ctx.font = `11px ${th.monoFont}`;
-    for (const [k, v] of [["O", c.open], ["H", c.high], ["L", c.low], ["C", close]] as const) {
+    if (lg.symbol) {
+      if (this.opts.symbol) {
+        ctx.font = this.font(2, "600", false);
+        ctx.fillStyle = th.textStrong;
+        ctx.fillText(this.opts.symbol, x, y);
+        x += ctx.measureText(this.opts.symbol).width + 8;
+      }
+      ctx.font = this.font(1, "", false);
       ctx.fillStyle = th.text;
-      ctx.fillText(k, x, y);
-      x += ctx.measureText(k).width + 4;
-      ctx.fillStyle = color;
-      const s = formatPrice(v, dec);
-      ctx.fillText(s, x, y);
-      x += ctx.measureText(s).width + 10;
-      if (x > this.plotW() - 60) return;
+      ctx.fillText(this.opts.timeframe, x, y);
+      x += ctx.measureText(this.opts.timeframe).width + 14;
     }
-    const chg = c.open ? ((close - c.open) / c.open) * 100 : 0;
-    ctx.fillStyle = color;
-    ctx.fillText(`${chg >= 0 ? "+" : "−"}${Math.abs(chg).toFixed(2)}%`, x, y);
-    this.drawMainIndicatorLegend(dec, hovered);
+    if (c && (lg.ohlc || lg.change)) {
+      const close = hovered ? c.close : this.store.last!.close;
+      const color = close >= c.open ? th.up : th.down;
+      ctx.font = this.font(0);
+      let room = true;
+      if (lg.ohlc) for (const [k, v] of [[L.open, c.open], [L.high, c.high], [L.low, c.low], [L.close, close]] as const) {
+        ctx.fillStyle = th.text;
+        ctx.fillText(k, x, y);
+        x += ctx.measureText(k).width + 4;
+        ctx.fillStyle = color;
+        const s = this.fmtPrice(v, dec);
+        ctx.fillText(s, x, y);
+        x += ctx.measureText(s).width + 10;
+        if (x > this.plotW() - 60) { room = false; break; }
+      }
+      if (room && lg.change) {
+        const chg = c.open ? ((close - c.open) / c.open) * 100 : 0;
+        ctx.fillStyle = color;
+        ctx.fillText(`${chg >= 0 ? "+" : "−"}${Math.abs(chg).toFixed(2)}%`, x, y);
+      }
+    }
+    if (lg.indicators) this.drawMainIndicatorLegend(dec, hovered);
   }
 
   /** Second legend row: each price-pane indicator with its value and a close button. */
   private drawMainIndicatorLegend(dec: number, hovered: Candle | null): void {
     const { ctx, theme: th } = this;
     let x = 12;
-    const y = 36;
+    const y = 18 + this.opts.layout.fontSize + 7;
     const idx = hovered ? this.store.indexAtOrAfter(hovered.time) : this.store.length - 1;
     for (const [key, ind] of this.indicators) {
       if (ind.def.placement !== "main") continue;
       const out = this.output(ind);
-      ctx.font = `11px ${th.font}`;
+      ctx.font = this.font(0, "", false);
       ctx.fillStyle = out.lines[0]?.color ?? th.text;
       const label = ind.def.label(ind.params);
       ctx.fillText(label, x, y);
       x += ctx.measureText(label).width + 6;
-      ctx.font = `11px ${th.monoFont}`;
+      ctx.font = this.font(0);
       for (const line of out.lines) {
         const v = line.values[idx];
         if (!Number.isFinite(v)) continue;
-        const s = formatPrice(v, dec);
+        const s = this.fmtPrice(v, dec);
         ctx.fillStyle = line.color;
         ctx.fillText(s, x, y);
         x += ctx.measureText(s).width + 6;
       }
-      x = this.closeButton(x, y, () => { this.removeIndicator(key); this.emit("indicatorschange", this.indicatorList); }) + 14;
+      x = (this.opts.interaction.closeIndicators ? this.closeButton(x, y, () => { this.removeIndicator(key); this.emit("indicatorschange", this.indicatorList); }) : x) + 14;
       if (x > this.plotW() - 80) break;
     }
   }
@@ -1023,7 +1093,7 @@ export class Chart {
   // ================================================================ indicators: drawing
 
   private output(ind: ActiveIndicator): IndicatorOutput {
-    if (!ind.cache || ind.cache.version !== this.dataVersion) ind.cache = { version: this.dataVersion, out: ind.def.compute(this.store.all, ind.params) };
+    if (!ind.cache || ind.cache.version !== this.dataVersion) ind.cache = { version: this.dataVersion, out: styled(ind.def.compute(this.store.all, ind.params), ind.style) };
     return ind.cache.out;
   }
 
@@ -1072,7 +1142,7 @@ export class Chart {
     const pw = this.plotW();
     const { from, to } = this.visibleCandles();
     const candlePx = this.tf.ms / this.msPerPx;
-    const barW = Math.max(1, Math.min(candlePx * 0.72, candlePx - 1));
+    const barW = Math.max(1, Math.min(candlePx * this.opts.series.candleWidth, candlePx - 1));
     const hovered = this.pointer && !this.drag?.moved && this.pointer.x <= pw ? this.store.candleAt(this.xToTime(this.pointer.x)) : null;
     const idx = hovered ? this.store.indexAtOrAfter(hovered.time) : this.store.length - 1;
 
@@ -1104,7 +1174,7 @@ export class Chart {
       ctx.save();
       ctx.beginPath(); ctx.rect(0, box.top + 1, pw, box.h - 1); ctx.clip();
       ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = th.grid.replace(/[\d.]+\)$/, "0.25)");
+      ctx.strokeStyle = th.levelLine;
       for (const lvl of out.levels ?? []) { const ly = crisp(y(lvl)); ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(pw, ly); ctx.stroke(); }
       ctx.setLineDash([]);
       if (out.histogram) {
@@ -1123,13 +1193,13 @@ export class Chart {
       ctx.restore();
 
       // axis labels
-      ctx.font = `10px ${th.monoFont}`;
+      ctx.font = this.font(-1);
       ctx.fillStyle = th.text;
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
       const ticks = out.range ? (out.levels ?? []) : priceTicks(lo, hi, Math.max(1, Math.floor(box.h / 40)));
       const step = ticks.length > 1 ? ticks[1] - ticks[0] : hi - lo;
-      for (const t of ticks) {
+      if (this.opts.priceScale.visible) for (const t of ticks) {
         const ty = y(t);
         if (ty < box.top + 8 || ty > box.top + box.h - 6) continue;
         ctx.fillText(this.formatPaneValue(t, step), pw + 10, ty);
@@ -1138,12 +1208,12 @@ export class Chart {
       // header: name, values at the hovered (or last) candle, close button
       let x = 10;
       const hy = box.top + 12;
-      ctx.font = `11px ${th.font}`;
+      ctx.font = this.font(0, "", false);
       ctx.fillStyle = th.textStrong;
       const label = ind.def.label(ind.params);
       ctx.fillText(label, x, hy);
       x += ctx.measureText(label).width + 8;
-      ctx.font = `11px ${th.monoFont}`;
+      ctx.font = this.font(0);
       const vals: [string, number][] = out.lines.map((l) => [l.color, l.values[idx]]);
       if (out.histogram) vals.push([out.histogram.up[idx] ? out.histogram.upColor : out.histogram.downColor, out.histogram.values[idx]]);
       for (const [color, v] of vals) {
@@ -1154,7 +1224,7 @@ export class Chart {
         x += ctx.measureText(s).width + 8;
       }
       const key = box.key!;
-      this.closeButton(x, hy, () => { this.removeIndicator(key); this.emit("indicatorschange", this.indicatorList); });
+      if (this.opts.interaction.closeIndicators) this.closeButton(x, hy, () => { this.removeIndicator(key); this.emit("indicatorschange", this.indicatorList); });
     }
   }
 
@@ -1173,10 +1243,11 @@ export class Chart {
 
   /** Compact numbers for panes: 54.2, 0.00031, 1.2K, 3.4M. */
   private formatPaneValue(v: number, step: number): string {
+    if (this.opts.format.indicator) return this.opts.format.indicator(v);
     const a = Math.abs(v);
     if (a >= 1e6) return (v / 1e6).toFixed(2) + "M";
     if (a >= 1e4) return (v / 1e3).toFixed(1) + "K";
-    return formatPrice(v, Math.min(8, stepDecimals(Math.abs(step) || 1)));
+    return this.fmtPrice(v, Math.min(8, stepDecimals(Math.abs(step) || 1)));
   }
 
   /** A small × drawn at (x, y); registers a hit area. Returns the x after it. */
@@ -1200,7 +1271,7 @@ export class Chart {
 
   /** Index of the pane whose top divider is under the pointer (0 = none). */
   private dividerAt(p: { x: number; y: number }): number {
-    if (p.x > this.plotW()) return 0;
+    if (p.x > this.plotW() || !this.opts.interaction.resizePanes) return 0;
     for (let i = 1; i < this.layoutBoxes.length; i++) if (Math.abs(p.y - this.layoutBoxes[i].top) <= 4) return i;
     return 0;
   }
@@ -1208,8 +1279,9 @@ export class Chart {
   private resizePanes(y: number): void {
     const d = this.paneDrag!;
     const dy = y - d.y;
-    const minAbove = d.index === 1 ? 120 : 48;
-    const above = Math.max(minAbove, d.above + dy), below = Math.max(48, d.above + d.below - above);
+    const minPane = this.opts.layout.paneMinHeight;
+    const minAbove = d.index === 1 ? 120 : minPane;
+    const above = Math.max(minAbove, d.above + dy), below = Math.max(minPane, d.above + d.below - above);
     const ph = this.plotH();
     const belowKey = this.layoutBoxes[d.index].key!, aboveKey = this.layoutBoxes[d.index - 1].key;
     this.indicators.get(belowKey)!.frac = below / ph;
@@ -1227,7 +1299,7 @@ export class Chart {
     pl.points.push(this.toPoint(p));
     if (pl.points.length >= POINTS_NEEDED[pl.tool]) {
       const id = "dr" + this.nextId++;
-      this.drawingList.push({ id, tool: pl.tool, points: pl.points, color: this.drawingColor, width: 1.5, style: "solid" });
+      this.drawingList.push({ id, tool: pl.tool, points: pl.points, color: this.drawingColor, width: this.opts.drawings.width, style: this.opts.drawings.style });
       this.tool = null;
       this.placing = null;
       this.emit("toolchange", null);
@@ -1238,7 +1310,7 @@ export class Chart {
   }
 
   private fibYs(d: Drawing): number[] {
-    return d.tool === "fib" ? FIB_LEVELS.map((l) => this.priceToY(fibPrice(d.points[0], d.points[1], l))) : [];
+    return d.tool === "fib" ? this.opts.drawings.fibLevels.map((l) => this.priceToY(fibPrice(d.points[0], d.points[1], l))) : [];
   }
 
   /** The drawing under the pointer, and which handle (or -1 for the body). Topmost first. */
@@ -1271,7 +1343,7 @@ export class Chart {
     const pw = this.plotW(), mh = this.mainH();
     const list: Drawing[] = [...this.drawingList];
     if (this.placing && this.placing.points.length && this.placing.hover) {
-      list.push({ id: "_preview", tool: this.placing.tool, points: [...this.placing.points, this.placing.hover], color: this.drawingColor, width: 1.5, style: "dashed" });
+      list.push({ id: "_preview", tool: this.placing.tool, points: [...this.placing.points, this.placing.hover], color: this.drawingColor, width: this.opts.drawings.width, style: "dashed" });
     }
     for (const d of list) {
       const pts = d.points.map((q) => this.toXY(q));
@@ -1290,18 +1362,22 @@ export class Chart {
           ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y);
           ctx.stroke();
           ctx.setLineDash([]);
-          const ys = FIB_LEVELS.map((l) => this.priceToY(fibPrice(d.points[0], d.points[1], l)));
-          // soft fill between 38.2 % and 61.8 %
-          ctx.fillStyle = withAlpha(d.color, 0.07);
-          ctx.fillRect(left, Math.min(ys[2], ys[4]), pw - left, Math.abs(ys[4] - ys[2]));
+          const levels = this.opts.drawings.fibLevels;
+          const ys = levels.map((l) => this.priceToY(fibPrice(d.points[0], d.points[1], l)));
+          // soft fill between 38.2 % and 61.8 % (when those levels are in use)
+          const a = levels.indexOf(0.382), b = levels.indexOf(0.618);
+          if (a >= 0 && b >= 0) {
+            ctx.fillStyle = withAlpha(d.color, 0.07);
+            ctx.fillRect(left, Math.min(ys[a], ys[b]), pw - left, Math.abs(ys[b] - ys[a]));
+          }
           ctx.beginPath();
           ys.forEach((y) => { ctx.moveTo(left, crisp(y)); ctx.lineTo(pw, crisp(y)); });
           ctx.stroke();
-          ctx.font = `10px ${th.monoFont}`;
+          ctx.font = this.font(-1);
           ctx.fillStyle = d.color;
           ctx.textAlign = "left";
           ctx.textBaseline = "bottom";
-          FIB_LEVELS.forEach((l, i) => ctx.fillText(`${(l * 100).toFixed(1)}%  ${formatPrice(fibPrice(d.points[0], d.points[1], l), dec)}`, left + 4, ys[i] - 2));
+          levels.forEach((l, i) => ctx.fillText(`${(l * 100).toFixed(1)}%  ${this.fmtPrice(fibPrice(d.points[0], d.points[1], l), dec)}`, left + 4, ys[i] - 2));
           ctx.beginPath();
           break;
         }
@@ -1327,19 +1403,19 @@ export class Chart {
   private drawDrawingTags(dec: number): void {
     const { ctx } = this;
     const tag = (text: string, x: number, y: number, color: string, align: "left" | "center") =>
-      pill(ctx, text, x, y, { bg: color, fg: "#fff", font: `11px ${this.theme.monoFont}`, align, width: align === "left" ? this.axisW - 8 : 0 });
+      pill(ctx, text, x, y, { bg: color, fg: this.theme.overlayText, font: this.font(0), align, width: align === "left" ? this.axisW - 8 : 0 });
     for (const d of this.drawingList) {
       const sel = d.id === this.selectedId;
       if (d.tool === "horizontal" || sel) {
         for (const q of d.tool === "vertical" ? [] : d.points) {
           const y = this.priceToY(q.price);
-          if (y > 0 && y < this.mainH()) tag(formatPrice(q.price, dec), this.plotW() + 4, y, d.color, "left");
+          if (y > 0 && y < this.mainH() && this.opts.priceScale.visible) tag(this.fmtPrice(q.price, dec), this.plotW() + 4, y, d.color, "left");
         }
       }
       if (sel && d.tool !== "horizontal") {
         for (const q of d.points) {
           const x = this.timeToX(q.time);
-          if (x > 0 && x < this.plotW()) tag(formatTime(q.time, "full", this.tz(q.time)).slice(5, 16), x, this.plotH() + AXIS_H / 2, d.color, "center");
+          if (x > 0 && x < this.plotW() && this.opts.timeScale.visible) tag(this.fmtTime(q.time, "drawing"), x, this.plotH() + this.axisH() / 2, d.color, "center");
         }
       }
     }
@@ -1370,7 +1446,7 @@ export class Chart {
       const p = this.local(e);
       this.touches.set(e.pointerId, p);
       c.setPointerCapture?.(e.pointerId);
-      if (this.touches.size === 2) {
+      if (this.touches.size === 2 && this.opts.interaction.pinchZoom) {
         const [a, b] = [...this.touches.values()];
         const mid = (a.x + b.x) / 2;
         this.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), msPerPx: this.msPerPx, anchorTime: this.xToTime(mid), anchorX: mid };
@@ -1386,7 +1462,7 @@ export class Chart {
       if (this.hitAt(p)) return;
       if (p.x <= this.plotW() && p.y < this.mainH()) {
         if (this.placing) { this.placePoint(p); return; }
-        const found = this.drawingAt(p);
+        const found = this.opts.interaction.editDrawings ? this.drawingAt(p) : null;
         if (found) {
           this.select(found.id);
           const d = this.selectedDrawing!;
@@ -1396,7 +1472,7 @@ export class Chart {
         }
         if (this.selectedId) this.select(null);
       }
-      if (p.x <= this.plotW()) this.drag = { x: p.x, rightTime: this.rightTime, moved: false, id: e.pointerId };
+      if (p.x <= this.plotW() && this.touches.size === 1) this.drag = { x: p.x, rightTime: this.rightTime, moved: false, id: e.pointerId };
       this.pointer = e.pointerType === "mouse" ? p : null;
       this.markDirty();
     });
@@ -1422,11 +1498,11 @@ export class Chart {
       if (this.drawDrag) { this.moveDrawing(p); return; }
       if (this.placing) { this.placing.hover = this.toPoint(p); this.pointer = p; this.markDirty(); }
       if (!this.drag) c.style.cursor = this.dividerAt(p) > 0 ? "row-resize" : this.hitAt(p) ? "pointer"
-        : !this.placing && this.drawingAt(p) ? "move" : "crosshair";
+        : !this.placing && this.opts.interaction.editDrawings && this.drawingAt(p) ? "move" : "crosshair";
       if (this.drag && this.drag.id === e.pointerId) {
         const dx = p.x - this.drag.x;
         if (Math.abs(dx) > 3) this.drag.moved = true;
-        if (this.drag.moved) {
+        if (this.drag.moved && this.opts.interaction.pan) {
           this.setFollowing(false);
           this.rightTime = this.drag.rightTime - dx * this.msPerPx;
           c.style.cursor = "grabbing";
@@ -1451,7 +1527,7 @@ export class Chart {
           if (e.pointerType !== "mouse") this.pointer = this.pointer ? null : p; // tap toggles the crosshair on touch
         }
         // snap back to following when dragged to (or past) the live edge
-        if (this.drag.moved && this.rightTime >= this.liveTime() + this.plotW() * this.opts.rightPadding * this.msPerPx) this.setFollowing(true);
+        if (this.drag.moved && this.rightTime >= this.liveTime() + this.plotW() * this.opts.timeScale.rightPadding * this.msPerPx) this.setFollowing(true);
         this.drag = null;
       }
       c.style.cursor = "crosshair";
@@ -1464,6 +1540,8 @@ export class Chart {
     });
 
     on("wheel", (e) => {
+      // with wheel zoom off, the page scrolls as usual
+      if (!this.opts.interaction.wheelZoom) return;
       e.preventDefault();
       const p = this.local(e);
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey) {
@@ -1477,14 +1555,15 @@ export class Chart {
       this.zoomAt(this.following ? this.timeToX(this.liveTime()) : p.x, factor);
     }, { passive: false });
 
-    on("dblclick", () => this.goLive());
+    on("dblclick", () => { if (this.opts.interaction.doubleClickToLive) this.goLive(); });
 
     on("keydown", (e) => {
+      if (!this.opts.interaction.keyboard) return;
       const step = this.plotW() * 0.15 * this.msPerPx;
       let handled = true;
       switch (e.key) {
-        case "ArrowLeft": this.setFollowing(false); this.rightTime -= step; break;
-        case "ArrowRight": this.rightTime += step; if (this.rightTime >= this.liveTime()) this.setFollowing(true); break;
+        case "ArrowLeft": if (!this.opts.interaction.pan) { handled = false; break; } this.setFollowing(false); this.rightTime -= step; break;
+        case "ArrowRight": if (!this.opts.interaction.pan) { handled = false; break; } this.rightTime += step; if (this.rightTime >= this.liveTime()) this.setFollowing(true); break;
         case "+": case "=": this.zoomIn(); break;
         case "-": case "_": this.zoomOut(); break;
         case "End": this.goLive(); break;
@@ -1495,7 +1574,7 @@ export class Chart {
           else handled = false;
           break;
         case "Delete": case "Backspace":
-          if (this.selectedId) this.removeDrawing(this.selectedId); else handled = false;
+          if (this.selectedId && this.opts.interaction.editDrawings) this.removeDrawing(this.selectedId); else handled = false;
           break;
         default: handled = false;
       }
@@ -1513,7 +1592,19 @@ export class Chart {
 
 function crisp(v: number): number { return Math.round(v) + 0.5; }
 
-function dash(style: "solid" | "dashed" | "dotted"): number[] {
+/** Applies per-indicator style overrides to computed output. */
+function styled(out: IndicatorOutput, st: IndicatorStyle): IndicatorOutput {
+  if (!st.colors && st.width === undefined && !st.upColor && !st.downColor && !st.bandColor && !st.levels) return out;
+  return {
+    ...out,
+    lines: out.lines.map((l, i) => ({ ...l, color: st.colors?.[i] ?? l.color, width: st.width ?? l.width })),
+    histogram: out.histogram && { ...out.histogram, upColor: st.upColor ?? out.histogram.upColor, downColor: st.downColor ?? out.histogram.downColor },
+    band: out.band && { ...out.band, color: st.bandColor ?? out.band.color },
+    levels: st.levels ?? out.levels,
+  };
+}
+
+function dash(style: LineStyle): number[] {
   return style === "dashed" ? [6, 4] : style === "dotted" ? [1, 3] : [];
 }
 

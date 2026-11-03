@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tickline · A live trading chart for any website</title>
-  <meta name="description" content="Tickline is a live trading chart in one HTML tag: smooth real-time prices, candles, indicators, drawing tools and trade markers. Works with React, Vue, Angular, Blazor or plain HTML. 19 KB, no dependencies." />
+  <meta name="description" content="Tickline is a live trading chart in one HTML tag: smooth real-time prices, candles, indicators, drawing tools and trade markers. Works with React, Vue, Angular, Blazor or plain HTML. 23 KB, no dependencies." />
   <meta name="theme-color" content="#0b0f17" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="css/site.css" />
@@ -17,6 +17,7 @@
       <a href="#demo">Demo</a>
       <a href="#start">Get started</a>
       <a href="#frameworks">Frameworks</a>
+      <a href="#customise">Customise</a>
       <a href="#reference">Reference</a>
       <a class="gh" href="https://github.com/vongvisalsambath/tickline">GitHub</a>
     </nav>
@@ -28,7 +29,7 @@
       <div class="wrap">
         <p class="eyebrow">Open-source chart for trading apps</p>
         <h1>A live trading chart for <span class="hl">any website.</span></h1>
-        <p class="lead">One <code>&lt;trade-chart&gt;</code> tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. Plain HTML, React, Vue, Angular or Blazor. 19 KB compressed, no dependencies.</p>
+        <p class="lead">One <code>&lt;trade-chart&gt;</code> tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. Plain HTML, React, Vue, Angular or Blazor. Configure almost everything. 23 KB compressed, no dependencies.</p>
         <div class="actions">
           <a class="btn" href="#start">Get started</a>
           <a class="btn ghost" href="https://github.com/vongvisalsambath/tickline">View on GitHub</a>
@@ -70,8 +71,8 @@
           <article><h3>Everything in the box</h3><p>Candles, bars, Heikin-Ashi, line and area; SMA, EMA, Bollinger Bands, RSI, MACD and volume; trend lines and Fibonacci. No plugins to write.</p></article>
           <article><h3>Show your users' positions</h3><p>Markers, entry lines, shaded zones and expiry lines with countdowns. Your app keeps its own trading logic.</p></article>
           <article><h3>Works with any stack</h3><p>A standard web component: plain HTML, React, Vue, Angular, Svelte or Blazor. Feed it from WebSocket, REST or SignalR.</p></article>
-          <article><h3>Small and fast</h3><p>19 KB compressed, no dependencies, one canvas, drawing only what's visible. Pauses itself when off-screen.</p></article>
-          <article><h3>Yours to style</h3><p>Dark and light themes, every colour a CSS variable, keyboard support, and touch gestures on phones.</p></article>
+          <article><h3>Small and fast</h3><p>23 KB compressed, no dependencies, one canvas, drawing only what's visible. Pauses itself when off-screen.</p></article>
+          <article><h3>Configure almost everything</h3><p>Sizes, fonts, grid, axes, crosshair, legend, zoom limits, gestures, animation, number and date formats, every colour and every word, through one documented options object.</p></article>
         </div>
       </div>
     </section>
@@ -214,8 +215,58 @@ window.tickline = {
       </div>
     </section>
 
+    <!-- ================================================================ customise -->
+    <section id="customise" class="band" aria-labelledby="custom-title">
+      <div class="wrap">
+        <h2 id="custom-title">Configure almost everything.</h2>
+        <p class="lead">One options object controls the chart: sizes, fonts, grid, axes, crosshair, legend, the live price, zoom limits, gestures, animation, formats, colours and every piece of text. Change something below and copy the code.</p>
+        <div class="custom">
+          <form class="knobs" id="knobs" aria-label="Chart settings">
+            <label>Language <select name="lang">
+              <option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="ja">日本語</option>
+            </select></label>
+            <label>Chart type <select name="type">
+              <option value="candles">Candles</option><option value="hollow">Hollow candles</option><option value="bars">Bars</option><option value="heikin-ashi">Heikin-Ashi</option><option value="line">Line</option><option value="area">Area</option>
+            </select></label>
+            <label>Grid <select name="grid"><option value="both">Both</option><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option><option value="none">None</option></select></label>
+            <label>Crosshair <select name="crosshair"><option value="snap">Snap to candle</option><option value="free">Free</option><option value="hidden">Hidden</option></select></label>
+            <label>Live price line <select name="line"><option value="short">Short</option><option value="full">Full width</option><option value="none">None</option></select></label>
+            <label>Candle width <input type="range" name="candleWidth" min="0.2" max="1" step="0.04" value="0.72" /></label>
+            <label>Font size <input type="range" name="fontSize" min="9" max="15" step="1" value="11" /></label>
+            <label>Right padding <input type="range" name="rightPadding" min="0" max="0.5" step="0.05" value="0.2" /></label>
+            <label>Up colour <input type="color" name="up" value="#22c38e" /></label>
+            <label>Down colour <input type="color" name="down" value="#f0506e" /></label>
+            <fieldset>
+              <legend>Show</legend>
+              <label><input type="checkbox" name="legend" checked /> Legend</label>
+              <label><input type="checkbox" name="priceScale" checked /> Price axis</label>
+              <label><input type="checkbox" name="timeScale" checked /> Time axis</label>
+              <label><input type="checkbox" name="countdown" checked /> Countdown</label>
+              <label><input type="checkbox" name="pulse" checked /> Live pulse</label>
+              <label><input type="checkbox" name="wicks" checked /> Wicks</label>
+              <label><input type="checkbox" name="toolbar" checked /> Drawing tools</label>
+              <label><input type="checkbox" name="zoomButtons" checked /> Zoom buttons</label>
+            </fieldset>
+            <fieldset>
+              <legend>Allow</legend>
+              <label><input type="checkbox" name="pan" checked /> Panning</label>
+              <label><input type="checkbox" name="wheelZoom" checked /> Wheel zoom</label>
+              <label><input type="checkbox" name="animate" checked /> Animation</label>
+            </fieldset>
+            <button type="reset" class="reset">Reset</button>
+          </form>
+          <div class="custom-out">
+            <trade-chart id="custom-chart" class="chart small" symbol="EUR/USD" timeframe="1m" indicators="sma:20"></trade-chart>
+            <div class="code-head"><span>Your settings</span><button type="button" class="copy" id="copy-options">Copy</button></div>
+<pre class="code" id="options-code"><code class="js"></code></pre>
+          </div>
+        </div>
+        <p class="note">Every setting, its default and more examples (custom number and date formats, a sparkline, saving a user's chart) are in the <a href="https://github.com/vongvisalsambath/tickline/blob/main/docs/configuration.md">configuration guide</a>.</p>
+      </div>
+    </section>
+
     <!-- ================================================================ reference -->
-    <section id="reference" class="band" aria-labelledby="ref-title">
+    <section id="reference" aria-labelledby="ref-title">
       <div class="wrap">
         <h2 id="ref-title">Reference</h2>
         <div class="ref-grid">
@@ -231,8 +282,15 @@ window.tickline = {
               <tr><td><code>price-line</code></td><td>short (default), full or none</td></tr>
               <tr><td><code>countdown</code></td><td>false hides the candle timer</td></tr>
               <tr><td><code>timezone</code></td><td>local (default) or minutes from UTC, e.g. 420</td></tr>
-              <tr><td><code>drawing-tools</code></td><td>false hides the drawing toolbar</td></tr>
+              <tr><td><code>locale</code></td><td>de-DE, fr-FR, ja-JP … for numbers and dates</td></tr>
+              <tr><td><code>font-size</code></td><td>Base font size in px (default 11)</td></tr>
+              <tr><td><code>crosshair</code></td><td>snap (default), free or hidden</td></tr>
+              <tr><td><code>grid</code></td><td>both, horizontal, vertical or none</td></tr>
+              <tr><td><code>legend</code></td><td>false hides the legend</td></tr>
+              <tr><td><code>min-visible-candles</code></td><td>Fewest candles you can zoom in to</td></tr>
+              <tr><td><code>drawing-tools</code></td><td>false, or a list: trend, horizontal, fib</td></tr>
               <tr><td><code>controls</code></td><td>none hides all built-in buttons</td></tr>
+              <tr><td><code>options</code></td><td>Any settings as JSON</td></tr>
             </table>
           </div>
           <div>
@@ -244,7 +302,8 @@ window.tickline = {
               <tr><td><code>update(candle)</code></td><td>A whole live candle (kline streams)</td></tr>
               <tr><td><code>addMarker / addPriceLine / addTimeLine / addZone</code></td><td>Overlays; return an id</td></tr>
               <tr><td><code>updateOverlay(id, patch) / removeOverlay(id)</code></td><td>Change or remove one</td></tr>
-              <tr><td><code>addIndicator(id, params) / removeIndicator(key)</code></td><td>Indicators in code</td></tr>
+              <tr><td><code>setOptions(options) / options</code></td><td>Change any setting; read them all</td></tr>
+              <tr><td><code>addIndicator(id, params, style) / removeIndicator(key)</code></td><td>Indicators in code, with colours, width, levels</td></tr>
               <tr><td><code>drawings / setDrawings(list)</code></td><td>Save and restore drawings</td></tr>
               <tr><td><code>setDrawingTool(tool)</code></td><td>line, trend, horizontal, vertical, fib</td></tr>
               <tr><td><code>zoomIn() / zoomOut() / goLive() / fitContent()</code></td><td>View</td></tr>
@@ -290,5 +349,6 @@ window.tickline = {
   </footer>
 
   <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/customise.js"></script>
 </body>
 </html>

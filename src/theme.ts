@@ -20,6 +20,8 @@ export const DARK: Theme = {
   crosshair: "rgba(230, 233, 239, 0.45)",
   pillBackground: "#e6e9ef",
   pillText: "#0b0f17",
+  overlayText: "#ffffff",
+  levelLine: "rgba(148, 163, 184, 0.25)",
   font: FONT,
   monoFont: MONO,
 };
@@ -40,6 +42,8 @@ export const LIGHT: Theme = {
   crosshair: "rgba(15, 23, 42, 0.4)",
   pillBackground: "#0f172a",
   pillText: "#ffffff",
+  overlayText: "#ffffff",
+  levelLine: "rgba(15, 23, 42, 0.22)",
   font: FONT,
   monoFont: MONO,
 };

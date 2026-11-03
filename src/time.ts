@@ -65,6 +65,8 @@ export interface TimeTick {
   label: string;
   /** A bigger boundary (new day, new month): drawn slightly stronger. */
   major: boolean;
+  /** Which format the label uses. */
+  kind: "seconds" | "minutes" | "days" | "day" | "month";
 }
 
 /**
@@ -84,7 +86,7 @@ export function timeTicks(from: number, to: number, minGapMs: number, tzOffsetMi
     for (let guard = 0; guard < 2400; guard++) {
       const t = Date.UTC(y, m, 1) - off;
       if (t > to) break;
-      if (t >= from && m % months === 0) ticks.push({ time: t, label: formatTime(t, "month", tzOffsetMin), major: m === 0 });
+      if (t >= from && m % months === 0) ticks.push({ time: t, label: formatTime(t, "month", tzOffsetMin), major: m === 0, kind: "month" });
       if (++m > 11) { m = 0; y++; }
     }
     return ticks;
@@ -95,11 +97,8 @@ export function timeTicks(from: number, to: number, minGapMs: number, tzOffsetMi
   for (let guard = 0; t <= to && guard < 1000; guard++, t += step) {
     const local = t + off;
     const isMidnight = local % DAY === 0;
-    ticks.push({
-      time: t,
-      label: kind !== "days" && isMidnight ? formatTime(t, "day", tzOffsetMin) : formatTime(t, kind, tzOffsetMin),
-      major: isMidnight,
-    });
+    const k = kind !== "days" && isMidnight ? "day" : kind;
+    ticks.push({ time: t, label: formatTime(t, k, tzOffsetMin), major: isMidnight, kind: k });
   }
   return ticks;
 }

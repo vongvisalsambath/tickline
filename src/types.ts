@@ -36,6 +36,10 @@ export interface Theme {
   crosshair: string;
   pillBackground: string;
   pillText: string;
+  /** Text on coloured tags: markers, price-line labels, drawing tags. */
+  overlayText: string;
+  /** Dashed reference levels in indicator panes (RSI 30/70, MACD 0). */
+  levelLine: string;
   font: string;
   monoFont: string;
 }
