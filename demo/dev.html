@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tickline dev</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #070a10; color: #e6e9ef; font: 14px system-ui, sans-serif; }
+    body { display: grid; grid-template-rows: auto 1fr; }
+    header { display: flex; flex-wrap: wrap; gap: .5rem; padding: .6rem .8rem; align-items: center; }
+    select, button { font: inherit; padding: .3rem .5rem; border-radius: 6px; border: 1px solid #2a3140; background: #121722; color: inherit; }
+    trade-chart { height: auto; margin: 0 .8rem .8rem; border-radius: 12px; border: 1px solid #1c2230; }
+    body.light { background: #f3f5f9; color: #0f172a; }
+    body.light select, body.light button { background: #fff; border-color: #d6dbe4; }
+  </style>
+</head>
+<body>
+  <header>
+    <b>Tickline dev</b>
+    <select id="type"><option>candles</option><option>hollow</option><option>bars</option><option>line</option><option>area</option><option>heikin-ashi</option></select>
+    <select id="tf"><option>5s</option><option>15s</option><option selected>1m</option><option>5m</option><option>1h</option></select>
+    <button id="theme" type="button">Light</button>
+    <button id="buy" type="button">Mark a buy</button>
+    <button id="clear" type="button">Clear marks</button>
+  </header>
+  <trade-chart id="chart" symbol="EUR/USD (simulated)" timeframe="1m"></trade-chart>
+
+  <script type="module">
+    import "../dist/tickline.js";
+    import { createMarket, history } from "./sim.js";
+
+    const chart = document.getElementById("chart");
+    const params = new URLSearchParams(location.search);
+    const tfMs = { "5s": 5e3, "15s": 15e3, "1m": 6e4, "5m": 3e5, "1h": 36e5 };
+    let market, timer;
+
+    function start(tf) {
+      clearInterval(timer);
+      market = createMarket({ seed: 11 });
+      chart.timeframe = tf;
+      chart.setData(history(market, { tfMs: tfMs[tf], count: 400 }));
+      timer = setInterval(() => chart.tick({ time: Date.now(), price: market.step(250), volume: 1 }), 250);
+    }
+    if (params.get("type")) chart.type = params.get("type");
+    document.getElementById("type").value = chart.type;
+    if (params.get("tf")) document.getElementById("tf").value = params.get("tf");
+    if (params.get("theme") === "light") { chart.setAttribute("theme", "light"); document.body.classList.add("light"); }
+    start(document.getElementById("tf").value);
+
+    document.getElementById("type").onchange = (e) => (chart.type = e.target.value);
+    document.getElementById("tf").onchange = (e) => start(e.target.value);
+    document.getElementById("theme").onclick = () => {
+      const light = chart.getAttribute("theme") !== "light";
+      chart.setAttribute("theme", light ? "light" : "dark");
+      document.body.classList.toggle("light", light);
+    };
+    const ids = [];
+    function markBuy() {
+      const now = Date.now(), price = market.price;
+      ids.push(chart.addMarker({ time: now, price, side: "buy", text: "$10" }));
+      ids.push(chart.addPriceLine({ price, color: "#22c38e", label: "Entry", from: now, to: now + 60_000, style: "solid" }));
+      ids.push(chart.addZone({ from: "top", to: price, color: "rgba(34,195,142,0.08)", start: now, end: now + 60_000 }));
+      ids.push(chart.addTimeLine({ time: now + 60_000, label: "Expiry", countdown: true, color: "#e6e9ef" }));
+    }
+    document.getElementById("buy").onclick = markBuy;
+    document.getElementById("clear").onclick = () => { ids.splice(0).forEach((id) => chart.removeOverlay(id)); };
+    if (params.has("marks")) setTimeout(markBuy, 300);
+    window.__chart = chart;
+  </script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+{
+  "name": "tickline",
+  "version": "0.1.0",
+  "description": "A live trading chart for any website: one <trade-chart> tag, smooth real-time prices, candles, indicators and trade markers. No dependencies.",
+  "type": "module",
+  "main": "./dist/tickline.js",
+  "module": "./dist/tickline.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/tickline.js"
+    },
+    "./umd": "./dist/tickline.umd.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "./dist/tickline.js",
+    "./dist/tickline.umd.js"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
+    "dev": "node scripts/build.mjs --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "chart",
+    "trading",
+    "candlestick",
+    "realtime",
+    "web-component",
+    "finance",
+    "ohlc",
+    "canvas"
+  ],
+  "author": "Vong Visalsambath",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vongvisalsambath/tickline"
+  },
+  "homepage": "https://tickline.vercel.app",
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "happy-dom": "^20.0.10",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
