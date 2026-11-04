@@ -761,7 +761,7 @@ export class TradeChartElement extends BaseElement {
     this.liveBtn.classList.toggle("show", !this.following && ui.liveButton);
 
     const tools = root.querySelector<HTMLElement>(".tools")!;
-    const list = ui.drawingTools.filter((t) => t in ICONS);
+    const list = ui.drawingTools.filter((t) => Object.prototype.hasOwnProperty.call(ICONS, t));
     tools.classList.toggle("off", !ui.drawingToolbar || list.length === 0);
     this.wrap.classList.toggle("tooled", ui.drawingToolbar && list.length > 0);
     tools.setAttribute("aria-label", L.drawingTools);
@@ -777,8 +777,12 @@ export class TradeChartElement extends BaseElement {
     if (!ui.drawingBar) bar.classList.remove("show");
     const swatches = root.querySelector(".swatches")!;
     const sw = drawings.colors.map((col) =>
-      `<button type="button" class="swatch" data-color="${esc(col)}" style="background:${esc(col)}" aria-label="${esc(L.color)} ${esc(col)}" aria-pressed="false"></button>`).join("");
-    if (swatches.innerHTML !== sw) swatches.innerHTML = sw;
+      `<button type="button" class="swatch" data-color="${esc(col)}" aria-label="${esc(L.color)} ${esc(col)}" aria-pressed="false"></button>`).join("");
+    if (swatches.innerHTML !== sw) {
+      swatches.innerHTML = sw;
+      // set through the CSS object model as a colour only: a value like "red; background-image: url(…)" can't add a request
+      swatches.querySelectorAll<HTMLElement>(".swatch").forEach((b) => { b.style.backgroundColor = b.dataset.color ?? ""; });
+    }
     this.markSwatches(c.selectedDrawing?.color ?? null);
     const del = root.querySelector<HTMLElement>("[data-del]")!;
     del.textContent = L.delete;

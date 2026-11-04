@@ -274,11 +274,36 @@ export interface SnippetInput {
 const attr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
 function js(v: unknown, indent: string): string {
-  return JSON.stringify(v, null, 2).replace(/"([a-zA-Z_$][\w$]*)":/g, "$1:").split("\n").join("\n" + indent);
+  // "<" only occurs inside strings here; written as \u003c, a value can't close the <script> it's printed in
+  return JSON.stringify(v, null, 2).replace(/"([a-zA-Z_$][\w$]*)":/g, "$1:").replace(/</g, "\\u003c").split("\n").join("\n" + indent);
+}
+
+/**
+ * What the snippet inputs may contain. They are pasted into JavaScript, HTML, JSX, Vue, Svelte, Angular and Razor code,
+ * where braces, quotes and brackets mean something, so each is limited to the characters its values need.
+ */
+export const SNIPPET_PATTERNS = {
+  symbol: /^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,39}$/,
+  timeframe: /^[1-9][0-9]{0,3}[smhdwM]$/,
+  indicators: /^\s*[a-z][a-z0-9-]{0,19}(\s*:\s*[0-9]{1,6}(\.[0-9]{1,4})?){0,4}(\s*,\s*[a-z][a-z0-9-]{0,19}(\s*:\s*[0-9]{1,6}(\.[0-9]{1,4})?){0,4}){0,9}\s*$/,
+} as const;
+
+/** Throws if a snippet input could change the meaning of the code it's pasted into. */
+export function checkSnippetInput(input: SnippetInput): void {
+  for (const k of ["symbol", "timeframe", "indicators"] as const) {
+    const v = input[k];
+    if (v !== undefined && (typeof v !== "string" || !SNIPPET_PATTERNS[k].test(v)))
+      throw new Error(`${k} ${JSON.stringify(String(v).slice(0, 60))} isn't allowed: ${k === "symbol" ? "use letters, digits, spaces and . _ : / -" : k === "timeframe" ? "use forms like 1m, 15m, 1h, 1d" : "use forms like \"sma:20, rsi:14, volume\""}.`);
+  }
+  if (input.height !== undefined && !(Number.isInteger(input.height) && input.height >= 80 && input.height <= 4000)) throw new Error("height is a whole number of px from 80 to 4000.");
+  if (input.theme !== undefined && input.theme !== "dark" && input.theme !== "light") throw new Error("theme is dark or light.");
+  if (input.type !== undefined && !["candles", "hollow", "bars", "heikin-ashi", "line", "area"].includes(input.type)) throw new Error("Unknown chart type.");
+  if (!FRAMEWORKS.includes(input.framework)) throw new Error("Unknown framework.");
 }
 
 /** Code that puts a live <trade-chart> in an app, for the given framework and data source. */
 export function snippet(input: SnippetInput): { files: { name: string; code: string }[]; notes: string[] } {
+  checkSnippetInput(input);
   const symbol = input.symbol ?? "BTC/USDT";
   const timeframe = input.timeframe ?? "1m";
   const type = input.type ?? "candles";

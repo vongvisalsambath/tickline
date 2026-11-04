@@ -465,7 +465,8 @@ export function mergeDeep<T>(base: T, patch: unknown): T {
   if (!isPlainObject(patch)) return base;
   const out: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
   for (const [k, v] of Object.entries(patch)) {
-    if (v === undefined) continue;
+    // JSON.parse makes "__proto__" an ordinary key; assigning it would swap the result's prototype
+    if (v === undefined || k === "__proto__" || k === "constructor" || k === "prototype") continue;
     out[k] = isPlainObject(v) && isPlainObject(out[k]) ? mergeDeep(out[k], v) : Array.isArray(v) ? [...v] : v;
   }
   return out as T;

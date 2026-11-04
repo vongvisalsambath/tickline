@@ -29,6 +29,40 @@ export const TOOL_NAMES: Record<DrawingTool, string> = {
   circle: "Circle", fib: "Fibonacci retracement", measure: "Measure", text: "Text",
 };
 
+/** The most drawings a chart keeps; more (from a saved state, say) are dropped. */
+export const MAX_DRAWINGS = 2000;
+/** The longest text a text drawing keeps. */
+export const MAX_DRAWING_TEXT = 500;
+
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/**
+ * A drawing made safe to keep, or null if it can't be drawn: a known tool, enough points with finite numbers,
+ * and every other field of the right type and size. Saved drawings may come from anywhere, so they're checked.
+ */
+export function cleanDrawing(d: unknown, fallback: { id: string; color: string }): Drawing | null {
+  if (!d || typeof d !== "object") return null;
+  const x = d as Record<string, unknown>;
+  const tool = x.tool as DrawingTool;
+  if (typeof tool !== "string" || !Object.prototype.hasOwnProperty.call(POINTS_NEEDED, tool) || !Array.isArray(x.points)) return null;
+  const points = (x.points as unknown[]).slice(0, POINTS_NEEDED[tool])
+    .map((q) => q && typeof q === "object" && finite((q as DrawingPoint).time) && finite((q as DrawingPoint).price) ? { time: (q as DrawingPoint).time, price: (q as DrawingPoint).price } : null);
+  if (points.length < POINTS_NEEDED[tool] || points.some((q) => !q)) return null;
+  const out: Drawing = {
+    id: typeof x.id === "string" && x.id.length > 0 && x.id.length <= 64 ? x.id : fallback.id,
+    tool,
+    points: points as DrawingPoint[],
+    color: typeof x.color === "string" && x.color.length > 0 && x.color.length <= 64 ? x.color : fallback.color,
+  };
+  if (finite(x.width)) out.width = Math.min(20, Math.max(0.5, x.width));
+  if (x.style === "solid" || x.style === "dashed" || x.style === "dotted") out.style = x.style;
+  if (x.locked !== undefined) out.locked = x.locked === true;
+  if (x.hidden !== undefined) out.hidden = x.hidden === true;
+  if (typeof x.text === "string") out.text = x.text.slice(0, MAX_DRAWING_TEXT);
+  if (finite(x.fontSize)) out.fontSize = Math.min(96, Math.max(6, x.fontSize));
+  return out;
+}
+
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 
 /** Price of a Fibonacci level between the two points (0 at the second point, 1 at the first, as usually drawn from a swing). */

@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
-  DATA_SOURCES, DOCS, FRAMEWORKS, GROUPS, SECTIONS, VERSION, getSection, indicators, listOptions, searchDocs, snippet, validateOptions,
+  DATA_SOURCES, DOCS, SNIPPET_PATTERNS, FRAMEWORKS, GROUPS, SECTIONS, VERSION, getSection, indicators, listOptions, searchDocs, snippet, validateOptions,
 } from "./knowledge";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
@@ -25,7 +25,7 @@ export function createServer(): McpServer {
   server.registerTool("search_docs", {
     title: "Search the Tickline docs",
     description: "Finds the README and configuration-guide sections that match a question, e.g. \"full screen\", \"translate labels\", \"load older candles\".",
-    inputSchema: { query: z.string().describe("Words to look for"), limit: z.number().int().min(1).max(10).optional().describe("Most sections to return (default 4)") },
+    inputSchema: { query: z.string().max(500).describe("Words to look for"), limit: z.number().int().min(1).max(10).optional().describe("Most sections to return (default 4)") },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ query, limit }) => {
     const hits = searchDocs(query, limit ?? 4);
@@ -36,7 +36,7 @@ export function createServer(): McpServer {
   server.registerTool("get_doc", {
     title: "Read a docs section",
     description: "Returns one section of the Tickline docs by id or title (e.g. \"configuration/livePosition\", \"Events\"). Without a section, lists them all.",
-    inputSchema: { section: z.string().optional().describe("Section id or title") },
+    inputSchema: { section: z.string().max(200).optional().describe("Section id or title") },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ section }) => {
     if (!section) return text(SECTIONS.map((s) => `${s.id}  (${s.title})`).join("\n"));
@@ -72,10 +72,10 @@ export function createServer(): McpServer {
     description: "Working code that adds a live Tickline chart to an app: loads history, streams prices, and loads older candles on scroll.",
     inputSchema: {
       framework: z.enum(FRAMEWORKS).describe("Where the chart goes"),
-      symbol: z.string().optional().describe("Market name, e.g. BTC/USDT (default)"),
-      timeframe: z.string().optional().describe("Candle size: 1m (default), 5m, 1h, 1d …"),
+      symbol: z.string().regex(SNIPPET_PATTERNS.symbol).optional().describe("Market name, e.g. BTC/USDT (default): letters, digits, spaces and . _ : / -"),
+      timeframe: z.string().regex(SNIPPET_PATTERNS.timeframe).optional().describe("Candle size: 1m (default), 5m, 1h, 1d …"),
       type: z.enum(["candles", "hollow", "bars", "heikin-ashi", "line", "area"]).optional(),
-      indicators: z.string().optional().describe("e.g. \"sma:20, rsi:14, volume\""),
+      indicators: z.string().regex(SNIPPET_PATTERNS.indicators).optional().describe("e.g. \"sma:20, rsi:14, volume\""),
       theme: z.enum(["dark", "light"]).optional(),
       height: z.number().int().min(80).max(4000).optional().describe("Height in px (default 480)"),
       options: z.record(z.string(), z.unknown()).optional().describe("Settings to pass to setOptions"),
@@ -87,7 +87,8 @@ export function createServer(): McpServer {
       const r = validateOptions(input.options);
       if (!r.valid) return { ...json({ error: "The options aren't valid.", problems: r.problems }), isError: true };
     }
-    const out = snippet(input);
+    let out: ReturnType<typeof snippet>;
+    try { out = snippet(input); } catch (e) { return { ...text((e as Error).message), isError: true }; }
     return text([...out.files.map((f) => `// ${f.name}\n${f.code}`), out.notes.map((n) => `Note: ${n}`).join("\n")].join("\n\n"));
   });
 

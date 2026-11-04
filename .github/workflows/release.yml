@@ -16,14 +16,19 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # pinned to commits (the tag is in the comment): this job can publish, so a moved tag mustn't change what runs
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - name: npm 11.5.1 or later (needed for trusted publishing)
-        run: npm install -g npm@latest
-      - run: npm ci
+        run: npm install -g npm@11.21.1
+      # no install scripts: this job can prove its identity to npm, and a dependency's script shouldn't get the chance
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=moderate
       - name: Tag matches both package versions
         run: |
           v="v$(node -p "require('./package.json').version")"

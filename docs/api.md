@@ -156,7 +156,7 @@ See [Drawings](drawing.md#drawings-the-users-tools).
 | `setDrawingTool(tool \| null)` | Start placing a drawing, or stop |
 | `drawingTool` | The tool being placed, or `null` |
 | `drawings` | Copies of every drawing, safe to store as JSON |
-| `setDrawings(list)` | Replace all drawings |
+| `setDrawings(list)` | Replace all drawings. Each is checked; ones that can't be drawn are skipped (see [Troubleshooting](troubleshooting.md)). |
 | `addDrawing(d)` | Add one from code; returns its id |
 | `updateDrawing(id, patch)` | Change `color`, `width`, `style`, `locked`, `hidden`, `text` or `fontSize` |
 | `duplicateDrawing(id)` | Copy one and select the copy; returns its id |

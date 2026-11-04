@@ -10,7 +10,7 @@ import { formatCountdown, formatTime, parseSpan, parseTimeframe, timeTicks, type
 import { DARK, LIGHT } from "./theme";
 import { applyOptions, cloneOptions, defaultOptions, type AnimationDurations, type ChartOptions, type LineStyle, type ResolvedOptions, type ThemeInput, type TimeLabelKind } from "./options";
 import { getIndicator, resolveParams, type IndicatorDefinition, type IndicatorOutput } from "./indicators";
-import { POINTS_NEEDED, distToDrawing, fibPrice, rayEnd, type Drawing, type DrawingPoint, type DrawingTool } from "./drawings";
+import { MAX_DRAWINGS, POINTS_NEEDED, cleanDrawing, distToDrawing, fibPrice, rayEnd, type Drawing, type DrawingPoint, type DrawingTool } from "./drawings";
 
 export type { ChartOptions } from "./options";
 
@@ -345,7 +345,7 @@ export class Chart {
 
   setType(type: ChartType): void {
     const from = this.opts.type, dur = this.dur("typeChange");
-    if (type === from) return;
+    if (type === from || !["line", "area", "candles", "hollow", "bars", "heikin-ashi"].includes(type)) return;
     this.opts.type = type;
     this.typeAnim = dur > 0 && this.store.length ? { from, t0: performance.now(), dur } : null;
     this.animate(dur);
@@ -529,8 +529,17 @@ export class Chart {
 
   /** Replaces all drawings (e.g. restoring saved ones). */
   setDrawings(list: readonly Drawing[]): void {
-    this.drawingList = list.filter((d) => d && POINTS_NEEDED[d.tool] && d.points?.length >= POINTS_NEEDED[d.tool])
-      .map((d) => ({ ...d, id: d.id || "dr" + this.nextId++, points: d.points.map((q) => ({ ...q })) }));
+    // saved drawings may come from anywhere: keep only ones that can be drawn, checked field by field
+    const ids = new Set<string>();
+    this.drawingList = [];
+    for (const d of Array.isArray(list) ? list : []) {
+      if (this.drawingList.length >= MAX_DRAWINGS) break;
+      const clean = cleanDrawing(d, { id: "dr" + this.nextId++, color: this.drawingColor });
+      if (!clean) continue;
+      if (ids.has(clean.id)) clean.id = "dr" + this.nextId++;
+      ids.add(clean.id);
+      this.drawingList.push(clean);
+    }
     this.select(null);
     this.markDirty();
   }
@@ -538,7 +547,10 @@ export class Chart {
   /** Adds a drawing in code. Returns its id. */
   addDrawing(d: Omit<Drawing, "id" | "color"> & { color?: string }): string {
     const id = "dr" + this.nextId++;
-    this.drawingList.push({ width: this.opts.drawings.width, style: this.opts.drawings.style, ...d, id, color: d.color ?? this.drawingColor, points: d.points.map((q) => ({ ...q })) });
+    const clean = cleanDrawing({ width: this.opts.drawings.width, style: this.opts.drawings.style, ...d, id }, { id, color: this.drawingColor });
+    if (!clean) throw new Error(`A ${String(d?.tool)} drawing needs a known tool and ${POINTS_NEEDED[d?.tool] ?? "enough"} points with finite time and price.`);
+    if (this.drawingList.length >= MAX_DRAWINGS) throw new Error(`A chart keeps at most ${MAX_DRAWINGS} drawings.`);
+    this.drawingList.push(clean);
     this.drawingsChanged();
     return id;
   }
@@ -558,9 +570,14 @@ export class Chart {
 
   /** Changes a drawing's colour, width, style, lock or visibility. */
   updateDrawing(id: string, patch: Partial<Pick<Drawing, "color" | "width" | "style" | "locked" | "hidden" | "text" | "fontSize">>): void {
-    const d = this.drawingList.find((x) => x.id === id);
-    if (!d) return;
-    Object.assign(d, patch);
+    const i = this.drawingList.findIndex((x) => x.id === id);
+    if (i < 0 || !patch || typeof patch !== "object") return;
+    const d = this.drawingList[i];
+    const { color, width, style, locked, hidden, text, fontSize } = patch;
+    const clean = cleanDrawing({ ...d, ...{ color, width, style, locked, hidden, text, fontSize } }, { id: d.id, color: d.color });
+    if (!clean) return;
+    // only the fields this method changes, and only to values that can be drawn
+    for (const k of Object.keys(clean) as (keyof Drawing)[]) if (k !== "id" && k !== "tool" && k !== "points") (d as unknown as Record<string, unknown>)[k] = clean[k];
     this.drawingsChanged();
   }
   removeDrawing(id: string): void {
@@ -612,7 +629,7 @@ export class Chart {
    * instead of staying on the range.
    */
   setVisibleRange(range: VisibleRange, opts: { follow?: boolean } & AnimateOptions = {}): void {
-    if (!(range.to > range.from)) return;
+    if (!Number.isFinite(range?.from) || !Number.isFinite(range?.to) || !(range.to > range.from)) return;
     const ms = this.clampMs((range.to - range.from) / this.plotW());
     if (opts.follow) { this.setFollowing(true); this.tweenView(ms, { right: "live" }, this.viewDur("scroll", opts)); }
     else { this.setFollowing(false); this.tweenView(ms, { right: range.to }, this.viewDur("scroll", opts)); }
@@ -703,19 +720,28 @@ export class Chart {
   /** Restores what getState() returned. Parts you leave out are kept as they are. */
   setState(st: Partial<ChartState>): void {
     if (st.type) this.setType(st.type);
-    if (st.indicators) {
+    if (Array.isArray(st.indicators)) {
       this.clearIndicators();
-      for (const i of st.indicators) { try { this.addIndicator(i.id, i.params, i.style); } catch (e) { console.warn(`Tickline: ${(e as Error).message}`); } }
+      for (const i of st.indicators.slice(0, 50)) { try { this.addIndicator(i.id, i.params, i.style); } catch (e) { console.warn(`Tickline: ${(e as Error).message}`); } }
       this.emit("indicatorschange", this.indicatorList);
     }
     if (st.drawings) this.setDrawings(st.drawings);
-    if (st.alerts) {
+    if (Array.isArray(st.alerts)) {
       for (const [id, ov] of [...this.overlays]) if (ov.kind === "alert") this.dropOverlay(id);
-      st.alerts.forEach((a) => this.addAlert(a));
+      // a saved state may come from anywhere: only alerts at a finite price, with short text
+      for (const a of st.alerts.slice(0, 500)) {
+        if (!a || typeof a !== "object" || typeof a.price !== "number" || !Number.isFinite(a.price)) continue;
+        this.addAlert({
+          price: a.price,
+          ...(typeof a.color === "string" && a.color.length <= 64 ? { color: a.color } : {}),
+          ...(typeof a.label === "string" ? { label: a.label.slice(0, 100) } : {}),
+          ...(typeof a.once === "boolean" ? { once: a.once } : {}),
+        });
+      }
     }
-    if (st.view) {
-      if (st.view.following || st.view.from === undefined || st.view.to === undefined) this.goLive();
-      else this.setVisibleRange({ from: st.view.from, to: st.view.to });
+    if (st.view && typeof st.view === "object") {
+      if (st.view.following || !Number.isFinite(st.view.from) || !Number.isFinite(st.view.to)) this.goLive();
+      else this.setVisibleRange({ from: st.view.from as number, to: st.view.to as number });
     }
     this.markDirty();
   }
