@@ -1,6 +1,6 @@
 # Tickline reference (compact)
 
-Full docs: https://tickline-chart.vercel.app/docs/ · API: https://tickline-chart.vercel.app/docs/api.html · Settings: https://tickline-chart.vercel.app/docs/configuration.html
+Full docs: https://tickline-chart.vercel.app/docs/ · API: https://tickline-chart.vercel.app/docs/api/ · Settings: https://tickline-chart.vercel.app/docs/configuration/
 
 ## Exports
 

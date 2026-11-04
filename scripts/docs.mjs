@@ -27,6 +27,8 @@ const PAGES = [
   ["docs/publishing.md", "Publishing (maintainers)", "publishing"],
 ];
 const byFile = new Map(PAGES.map(([f, , name]) => [f, name]));
+/** Every page has its own folder, and links are full paths, so they work at /docs/api, /docs/api/ or /docs/api/index.html. */
+const url = (name) => (name === "index" ? "/docs/" : `/docs/${name}/`);
 
 // GitHub's heading ids, so links work the same on GitHub and here
 const slug = (s) => s.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s/g, "-");
@@ -42,13 +44,13 @@ function rewrite(href, from) {
   for (const p of parts) { if (p === "..") stack.pop(); else if (p && p !== ".") stack.push(p); }
   const target = stack.join("/");
   const page = byFile.get(target);
-  if (page) return `${page}.html${anchor ? "#" + anchor : ""}`;
+  if (page) return `${url(page)}${anchor ? "#" + anchor : ""}`;
   return REPO + target + (anchor ? "#" + anchor : "");
 }
 
 const search = [];
 const nav = (current) => PAGES.map(([, title, name]) =>
-  `<a href="${name}.html"${name === current ? ' aria-current="page"' : ""}>${esc(title)}</a>`).join("\n");
+  `<a href="${url(name)}"${name === current ? ' aria-current="page"' : ""}>${esc(title)}</a>`).join("\n");
 
 for (const [file, title, name] of PAGES) {
   const md = readFileSync(root(file), "utf8");
@@ -91,18 +93,18 @@ for (const [file, title, name] of PAGES) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${esc(pageTitle)} · Tickline docs</title>
   <meta name="description" content="${esc(plain(tokens.find((t) => t.type === "paragraph")?.text ?? "Tickline documentation").slice(0, 160))}" />
-  <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="../css/site.css" />
-  <link rel="stylesheet" href="../css/docs.css" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/site.css" />
+  <link rel="stylesheet" href="/css/docs.css" />
 </head>
 <body class="docs">
   <a class="skip" href="#content">Skip to content</a>
   <header class="nav">
-    <a class="brand" href="../index.html"><span class="mark" aria-hidden="true"></span>Tickline</a>
+    <a class="brand" href="/"><span class="mark" aria-hidden="true"></span>Tickline</a>
     <nav aria-label="Site">
-      <a href="../index.html#demo">Demo</a>
-      <a href="index.html" aria-current="true">Docs</a>
-      <a href="api.html">API</a>
+      <a href="/#demo">Demo</a>
+      <a href="/docs/" aria-current="true">Docs</a>
+      <a href="/docs/api/">API</a>
       <a class="gh" href="https://github.com/vongvisalsambath/tickline">GitHub</a>
     </nav>
     <button class="menu" type="button" aria-expanded="false" aria-controls="sidebar">Menu</button>
@@ -121,12 +123,13 @@ ${body}
     </main>
     ${outline.length > 2 ? `<nav class="outline" aria-label="On this page"><p>On this page</p>${outline.map((o) => `<a href="#${o.id}">${esc(o.text)}</a>`).join("")}</nav>` : "<div></div>"}
   </div>
-  <script type="module" src="../js/docs.js"></script>
+  <script type="module" src="/js/docs.js"></script>
 </body>
 </html>
 `;
-  mkdirSync(root(out), { recursive: true });
-  writeFileSync(root(out + name + ".html"), html);
+  const dir = out + (name === "index" ? "" : name + "/");
+  mkdirSync(root(dir), { recursive: true });
+  writeFileSync(root(dir + "index.html"), html);
 }
 
 // search index: page, heading and some text per section

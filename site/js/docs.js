@@ -46,7 +46,7 @@ const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">"
 async function run() {
   const q = input.value.trim().toLowerCase();
   if (!q) { results.hidden = true; results.innerHTML = ""; return; }
-  index ??= await fetch("search.json").then((r) => r.json()).catch(() => []);
+  index ??= await fetch("/docs/search.json").then((r) => r.json()).catch(() => []);
   const words = q.split(/\s+/).filter(Boolean);
   const hits = index.map((e) => {
     const t = e.t.toLowerCase(), x = e.x.toLowerCase();
@@ -60,7 +60,7 @@ async function run() {
   }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 8);
   results.hidden = false;
   results.innerHTML = hits.length
-    ? hits.map(({ e }) => `<a href="${e.p}.html${e.id ? "#" + e.id : ""}"><strong>${esc(e.t)}</strong><span>${esc(e.pt)}${e.x ? " · " + esc(e.x.slice(0, 90)) : ""}</span></a>`).join("")
+    ? hits.map(({ e }) => `<a href="${e.p === "index" ? "/docs/" : `/docs/${e.p}/`}${e.id ? "#" + e.id : ""}"><strong>${esc(e.t)}</strong><span>${esc(e.pt)}${e.x ? " · " + esc(e.x.slice(0, 90)) : ""}</span></a>`).join("")
     : `<p class="none">Nothing found for “${esc(q)}”.</p>`;
 }
 input.addEventListener("input", run);

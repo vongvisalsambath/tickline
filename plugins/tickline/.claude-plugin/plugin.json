@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Add and configure Tickline live trading charts: a skill that knows the API and its pitfalls, and the Tickline MCP server for docs, settings validation and framework code.",
   "author": { "name": "Vong Visalsambath" },
-  "homepage": "https://tickline-chart.vercel.app/docs/ai.html",
+  "homepage": "https://tickline-chart.vercel.app/docs/ai/",
   "repository": "https://github.com/vongvisalsambath/tickline",
   "license": "MIT",
   "keywords": ["trading-chart", "candlestick", "web-component", "charts", "mcp"]
