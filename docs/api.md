@@ -234,7 +234,7 @@ On `<trade-chart>` they're DOM `CustomEvent`s named `tl-…` that bubble, with t
 
 Links charts so scrolling, zooming and the crosshair move together. `charts`: `Chart` objects or `<trade-chart>` elements in the page. `options`: `{ range?: boolean, crosshair?: boolean }` (both default `true`). Returns a function that unlinks them. See [Several charts](multiple-charts.md).
 
-### Indicators
+### Indicator functions
 
 | Function | |
 |---|---|
