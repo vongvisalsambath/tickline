@@ -224,3 +224,29 @@ export interface VisibleRange {
   from: number;
   to: number;
 }
+
+/** Per-call animation control for view changes (zoomIn, goLive, setVisibleRange, zoomTo …). */
+export interface AnimateOptions {
+  /** false jumps straight there; leave it out to use the chart's animation settings. */
+  animate?: boolean;
+  /** Length in ms for this call only (not scaled by animation.speed). */
+  duration?: number;
+}
+
+/** What the history loader is asked for. */
+export interface HistoryRequest {
+  /** Return candles older than this time (ms), or the latest candles when null (the first load). */
+  before: number | null;
+  /** How many candles to return (history.pageSize). Returning fewer is fine; an empty list means there's no older data. */
+  count: number;
+  timeframe: Timeframe;
+  symbol: string;
+  /** Aborted when the answer is no longer wanted (the timeframe or symbol changed, or new data was set). */
+  signal: AbortSignal | undefined;
+}
+
+/** Loads one page of candles. Used for the first load and for each older page. */
+export type HistoryLoader = (req: HistoryRequest) => Promise<readonly Candle[]> | readonly Candle[];
+
+/** idle: nothing loading · loading: a page is on its way · error: the last page failed · end: there's no older data. */
+export type HistoryState = "idle" | "loading" | "error" | "end";

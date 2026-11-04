@@ -14,6 +14,8 @@ const PAGES = [
   ["docs/configuration.md", "Configuration", "configuration"],
   ["docs/drawing.md", "Overlays, shapes and drawings", "drawing"],
   ["docs/indicators.md", "Indicators", "indicators"],
+  ["docs/zoom.md", "Zoom and navigation", "zoom"],
+  ["docs/animation.md", "Animation", "animation"],
   ["docs/styling.md", "Styling and themes", "styling"],
   ["docs/frameworks.md", "Frameworks", "frameworks"],
   ["docs/full-screen-and-images.md", "Full screen and images", "full-screen-and-images"],

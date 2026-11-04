@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tickline · A live trading chart for any website</title>
-  <meta name="description" content="Tickline is a live trading chart in one HTML tag: smooth real-time prices, candles, indicators, drawing tools and trade markers. Works with React, Vue, Angular, Blazor or plain HTML. 32 KB, no dependencies." />
+  <meta name="description" content="Tickline is a live trading chart in one HTML tag: smooth real-time prices, candles, indicators, drawing tools and trade markers. Works with React, Vue, Angular, Blazor or plain HTML. 38 KB, no dependencies." />
   <meta name="theme-color" content="#0b0f17" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="css/site.css" />
@@ -30,7 +30,7 @@
       <div class="wrap">
         <p class="eyebrow">Open-source chart for trading apps</p>
         <h1>A live trading chart for <span class="hl">any website.</span></h1>
-        <p class="lead">One <code>&lt;trade-chart&gt;</code> tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. Plain HTML, React, Vue, Angular or Blazor. Configure almost everything. 32 KB compressed, no dependencies.</p>
+        <p class="lead">One <code>&lt;trade-chart&gt;</code> tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. Plain HTML, React, Vue, Angular or Blazor. Configure almost everything. 38 KB compressed, no dependencies.</p>
         <div class="actions">
           <a class="btn" href="#start">Get started</a>
           <a class="btn ghost" href="/docs/">Read the docs</a>
@@ -73,7 +73,7 @@
           <article><h3>Everything in the box</h3><p>Candles, bars, Heikin-Ashi, line and area; SMA, EMA, Bollinger Bands, RSI, MACD and volume; trend lines, rectangles, Fibonacci and a measure tool; price alerts. No plugins to write.</p></article>
           <article><h3>Show your users' positions</h3><p>Markers, entry lines, shaded zones and expiry lines with countdowns. Your app keeps its own trading logic.</p></article>
           <article><h3>Works with any stack</h3><p>A standard web component: plain HTML, React, Vue, Angular, Svelte or Blazor. Feed it from WebSocket, REST or SignalR.</p></article>
-          <article><h3>Any screen, any size</h3><p>Responsive from small phones to wall screens, with full screen on every device (iPhone included) and one-click image download. 32 KB compressed, no dependencies.</p></article>
+          <article><h3>Any screen, any size</h3><p>Responsive from small phones to wall screens, with full screen on every device (iPhone included) and one-click image download. 38 KB compressed, no dependencies.</p></article>
           <article><h3>Configure almost everything</h3><p>Sizes, fonts, axes, crosshair, legend, where the live price sits on screen, zoom limits, gestures, formats, every colour and every word, through one documented options object.</p></article>
         </div>
       </div>
@@ -252,6 +252,8 @@ window.tickline = {
             <label>Candle width <input type="range" name="candleWidth" min="0.2" max="1" step="0.04" value="0.72" /></label>
             <label>Font size <input type="range" name="fontSize" min="9" max="15" step="1" value="11" /></label>
             <label>Right padding <input type="range" name="rightPadding" min="0" max="0.5" step="0.05" value="0.2" /></label>
+            <label>Animation speed <input type="range" name="speed" min="0.25" max="3" step="0.25" value="1" /></label>
+            <label>Easing <select name="easing"><option value="smooth">Smooth</option><option value="snappy">Snappy</option><option value="linear">Linear</option><option value="bounce">Bounce</option></select></label>
             <label>Up colour <input type="color" name="up" value="#22c38e" /></label>
             <label>Down colour <input type="color" name="down" value="#f0506e" /></label>
             <fieldset>
@@ -263,6 +265,7 @@ window.tickline = {
               <label><input type="checkbox" name="wicks" checked /> Wicks</label>
               <label><input type="checkbox" name="toolbar" checked /> Drawing tools</label>
               <label><input type="checkbox" name="zoomButtons" checked /> Zoom buttons</label>
+              <label><input type="checkbox" name="ranges" /> Range buttons</label>
               <label><input type="checkbox" name="highLow" /> High / low</label>
               <label><input type="checkbox" name="watermark" /> Watermark</label>
             </fieldset>
@@ -271,6 +274,7 @@ window.tickline = {
               <label><input type="checkbox" name="pan" checked /> Panning</label>
               <label><input type="checkbox" name="wheelZoom" checked /> Wheel zoom</label>
               <label><input type="checkbox" name="animate" checked /> Animation</label>
+              <label><input type="checkbox" name="axisScale" checked /> Axis dragging</label>
             </fieldset>
             <button type="reset" class="reset">Reset</button>
           </form>

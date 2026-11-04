@@ -205,7 +205,7 @@ describe("shapes, layers and markers", () => {
   });
 
   it("uses a custom live marker, and pulse: false turns the marker off", () => {
-    const c = make();
+    const c = make({ animate: false }); // no intro: the marker shows on the first frame
     c.setData(live(30));
     const calls: boolean[] = [];
     c.setOptions({ lastPrice: { marker: (_ctx, info) => calls.push(info.live) } });

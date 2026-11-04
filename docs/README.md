@@ -5,13 +5,15 @@ Tickline is a live trading chart for websites and web apps. You add one `<trade-
 ## Start here
 
 - **[Getting started](getting-started.md)**: install, the first chart, live prices, in five minutes.
-- **[Feeding data](data.md)**: candles, live trades, whole candles, older history, time zones, switching symbols.
+- **[Feeding data](data.md)**: candles, live trades, whole candles, loading history page by page, time zones, switching symbols.
 
 ## Guides
 
 - **[Configuration](configuration.md)**: every setting and its default.
 - **[Overlays, shapes and drawings](drawing.md)**: positions, alerts, shapes from code, custom layers, the live-price marker, and the drawing tools.
 - **[Indicators](indicators.md)**: the built-in indicators, styling them, and writing your own.
+- **[Zoom and navigation](zoom.md)**: wheel, pinch, axis dragging, range buttons, and zooming from code.
+- **[Animation](animation.md)**: speed, durations and easing for every animation.
 - **[Styling and themes](styling.md)**: colours, fonts, CSS variables and the built-in buttons.
 - **[Frameworks](frameworks.md)**: React, Next.js, Vue, Nuxt, Angular, Svelte, Blazor and plain HTML.
 - **[Full screen and images](full-screen-and-images.md)**: full screen in portrait and landscape, and downloading the chart.

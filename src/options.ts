@@ -137,6 +137,11 @@ export interface WatermarkOptions {
 export interface InteractionOptions {
   /** Drag (or swipe) to scroll through time (default true). */
   pan: boolean;
+  /**
+   * Drag the price axis up and down to stretch prices, and the time axis left and right to zoom;
+   * double-click an axis to reset it (default true).
+   */
+  axisScale: boolean;
   /** Mouse wheel and trackpad zoom (default true). */
   wheelZoom: boolean;
   /** Two-finger pinch zoom (default true). */
@@ -155,20 +160,63 @@ export interface InteractionOptions {
   zoomStep: number;
 }
 
+/** A built-in easing curve, or your own: a function from 0–1 (time) to 0–1 (progress). */
+export type Easing = "smooth" | "snappy" | "linear" | "bounce" | ((t: number) => number);
+
+/** How long each animation takes at speed 1, in ms. 0 turns that one off. */
+export interface AnimationDurations {
+  /** Candles rising in from left to right when data first arrives (default 700). */
+  intro: number;
+  /** A new candle growing in (default 250). */
+  newCandle: number;
+  /** Zooming with the buttons, keys, wheel or zoomTo (default 250). */
+  zoom: number;
+  /** Scrolling with goLive, scrollToTime, setVisibleRange or fitContent (default 400). */
+  scroll: number;
+  /** Cross-fade when the chart type changes (default 300). */
+  typeChange: number;
+  /** Price lines, markers, zones, alerts and shapes fading in and out (default 200). */
+  overlays: number;
+  /** Older candles fading in after a history page loads (default 300). */
+  history: number;
+  /** Indicator panes sliding open and closed; price indicators fading (default 250). */
+  panes: number;
+}
+
 export interface AnimationOptions {
-  /** Smooth live price and price scale (default true; always off when the user prefers reduced motion). */
+  /** All animation on or off (default true). */
   enabled: boolean;
-  /** How quickly the drawn price catches up with the last trade, in ms (default 110). */
+  /** Multiplies the speed of every animation: 2 is twice as fast, 0.5 half as fast (default 1). */
+  speed: number;
+  /** Easing for zoom, scroll, intro and fades (default "smooth"). */
+  easing: Easing;
+  /** Turn animation off when the user's system asks for reduced motion (default true). */
+  respectReducedMotion: boolean;
+  /** How long each kind of animation takes at speed 1. */
+  durations: AnimationDurations;
+  /** How quickly the drawn price catches up with the last trade, in ms (default 110). Divided by speed. */
   priceSmoothing: number;
-  /** How quickly the price scale adjusts, in ms (default 140). */
+  /** How quickly the price scale adjusts, in ms (default 140). Divided by speed. */
   scaleSmoothing: number;
 }
 
 export interface HistoryOptions {
-  /** Fire "requesthistory" when the user scrolls near the oldest candle (default true). */
+  /** Ask for older candles when the user scrolls near the oldest one (default true). */
   request: boolean;
   /** How close, as a share of the chart width (default 0.25). */
   threshold: number;
+  /** Candles asked for per page, passed to the history loader as `count` (default 500). */
+  pageSize: number;
+  /**
+   * Most candles kept in memory (default 100000; 0 for no limit). Above it, the oldest candles
+   * that are out of view are dropped; scrolling back loads them again through the history loader.
+   */
+  maxCandles: number;
+  /**
+   * Above this many candles, indicators are worked out only for the part in view (plus a warm-up)
+   * instead of the whole history, so long histories stay fast (default 20000; 0 always uses everything).
+   */
+  indicatorWindow: number;
 }
 
 export interface DrawingOptions {
@@ -216,6 +264,15 @@ export interface Labels {
   fullscreen: string;
   exitFullscreen: string;
   loading: string;
+  /** Shown at the left while older candles load. */
+  loadingHistory: string;
+  /** Shown at the first candle when there's no older history. */
+  historyStart: string;
+  /** Shown when older candles couldn't be loaded. */
+  historyError: string;
+  retry: string;
+  /** Prefix for the quick range buttons' accessible names, e.g. "Show 1D". */
+  showRange: string;
   lock: string;
   unlock: string;
   duplicate: string;
@@ -229,8 +286,17 @@ export interface Labels {
 
 /** The HTML controls of <trade-chart> (ignored by the plain Chart class). */
 export interface UiOptions {
-  /** The − ⌖ + buttons that appear on hover (default true). */
+  /** The − ⌖ + buttons (default true). */
   zoomButtons: boolean;
+  /**
+   * When the button bar shows: "auto" (default) on hover with a mouse and always on touch screens,
+   * "always", or "hover" (with a mouse; after a tap on touch screens).
+   */
+  controlsVisible: "auto" | "always" | "hover";
+  /** Quick range buttons such as 1D, 1W and All (default false). */
+  rangeButtons: boolean;
+  /** The ranges they offer, as spans like "30m", "4h", "1D", "1W", "1M", "1Y", or "All" (default 30m 1h 4h 1D 1W All). */
+  ranges: string[];
   /** The "Live ▸" button that appears after scrolling back (default true). */
   liveButton: boolean;
   /** The drawing toolbar (default true). */
@@ -293,11 +359,15 @@ type Groups = Omit<ResolvedOptions, "type" | "timeframe" | "symbol" | "precision
  * so `{ grid: { vertical: false } }` changes only that one value.
  */
 export type ChartOptions = Partial<Pick<ResolvedOptions, "type" | "timeframe" | "symbol" | "precision" | "timezone" | "locale" | "fps">>
-  & { [K in keyof Groups]?: K extends "labels" ? Partial<Omit<Labels, "tools">> & { tools?: Partial<Labels["tools"]> } : Partial<Groups[K]> }
+  & { [K in keyof Groups]?: K extends "labels" ? Partial<Omit<Labels, "tools">> & { tools?: Partial<Labels["tools"]> }
+    : K extends "animation" ? Partial<Omit<AnimationOptions, "durations">> & { durations?: Partial<AnimationDurations> }
+    : Partial<Groups[K]> }
   & {
     theme?: ThemeInput;
     /** Shorthand for `animation.enabled`. */
     animate?: boolean;
+    /** Shorthand for `animation.speed`. */
+    animationSpeed?: number;
     /** Shorthand for `lastPrice.countdown`. */
     countdown?: boolean;
     /** Shorthand for `lastPrice.line`. */
@@ -327,6 +397,11 @@ export const DEFAULT_LABELS: Labels = {
   fullscreen: "Full screen",
   exitFullscreen: "Exit full screen",
   loading: "Loading…",
+  loadingHistory: "Loading older data…",
+  historyStart: "Start of history",
+  historyError: "Couldn't load older data",
+  retry: "Retry",
+  showRange: "Show",
   lock: "Lock",
   unlock: "Unlock",
   duplicate: "Duplicate",
@@ -360,9 +435,13 @@ export function defaultOptions(): ResolvedOptions {
     lastPrice: { line: "short", tag: true, emphasisDigits: 3, marker: "pulse", pulse: true, countdown: true, countdownDirection: "down" },
     livePosition: { x: null, y: null },
     watermark: { text: "", color: "", fontSize: 0 },
-    interaction: { pan: true, wheelZoom: true, pinchZoom: true, keyboard: true, doubleClickToLive: true, resizePanes: true, closeIndicators: true, editDrawings: true, zoomStep: 1.6 },
-    animation: { enabled: true, priceSmoothing: 110, scaleSmoothing: 140 },
-    history: { request: true, threshold: 0.25 },
+    interaction: { pan: true, axisScale: true, wheelZoom: true, pinchZoom: true, keyboard: true, doubleClickToLive: true, resizePanes: true, closeIndicators: true, editDrawings: true, zoomStep: 1.6 },
+    animation: {
+      enabled: true, speed: 1, easing: "smooth", respectReducedMotion: true,
+      durations: { intro: 700, newCandle: 250, zoom: 250, scroll: 400, typeChange: 300, overlays: 200, history: 300, panes: 250 },
+      priceSmoothing: 110, scaleSmoothing: 140,
+    },
+    history: { request: true, threshold: 0.25, pageSize: 500, maxCandles: 100000, indicatorWindow: 20000 },
     drawings: {
       color: "#4c9aff", width: 1.5, style: "solid",
       colors: ["#4c9aff", "#22c38e", "#f0506e", "#f5a524", "#a78bfa", "#e6e9ef"],
@@ -371,7 +450,7 @@ export function defaultOptions(): ResolvedOptions {
     format: {},
     labels: { ...DEFAULT_LABELS, tools: { ...DEFAULT_LABELS.tools } },
     ui: {
-      zoomButtons: true, liveButton: true, drawingToolbar: true, drawingTools: ["line", "trend", "arrow", "horizontal", "vertical", "rect", "circle", "fib", "measure", "text"],
+      zoomButtons: true, controlsVisible: "auto", rangeButtons: false, ranges: ["30m", "1h", "4h", "1D", "1W", "All"], liveButton: true, drawingToolbar: true, drawingTools: ["line", "trend", "arrow", "horizontal", "vertical", "rect", "circle", "fib", "measure", "text"],
       drawingBar: true, zoomLimitMessage: true, screenshotButton: true, fullscreenButton: true,
       fullscreenOrientation: "auto", rotateButton: true,
     },
@@ -394,10 +473,11 @@ export function mergeDeep<T>(base: T, patch: unknown): T {
 
 /** Applies `patch` (with shorthands) to resolved settings and keeps values in range. Theme is handled separately. */
 export function applyOptions(current: ResolvedOptions, patch: ChartOptions): ResolvedOptions {
-  const { theme: _theme, animate, countdown, priceLine, rightPadding, minVisibleCandles, emphasisDigits, ...rest } = patch;
+  const { theme: _theme, animate, animationSpeed, countdown, priceLine, rightPadding, minVisibleCandles, emphasisDigits, ...rest } = patch;
   void _theme;
   const o = mergeDeep(current, rest);
   if (animate !== undefined) o.animation.enabled = animate;
+  if (animationSpeed !== undefined) o.animation.speed = animationSpeed;
   if (countdown !== undefined) o.lastPrice.countdown = countdown;
   if (priceLine !== undefined) o.lastPrice.line = priceLine;
   if (rightPadding !== undefined) o.timeScale.rightPadding = rightPadding;
@@ -421,6 +501,13 @@ export function applyOptions(current: ResolvedOptions, patch: ChartOptions): Res
   o.timeScale.defaultVisibleCandles = clamp(o.timeScale.defaultVisibleCandles, o.timeScale.minVisibleCandles, o.timeScale.maxVisibleCandles, 60);
   o.interaction.zoomStep = clamp(o.interaction.zoomStep, 1.01, 10, 1.6);
   o.history.threshold = clamp(o.history.threshold, 0, 2, 0.25);
+  o.history.pageSize = Math.round(clamp(o.history.pageSize, 1, 1e6, 500));
+  o.history.maxCandles = Math.round(clamp(o.history.maxCandles, 0, 1e9, 100000));
+  o.history.indicatorWindow = Math.round(clamp(o.history.indicatorWindow, 0, 1e9, 20000));
+  o.animation.speed = clamp(o.animation.speed, 0.05, 20, 1);
+  for (const k of Object.keys(o.animation.durations) as (keyof AnimationDurations)[]) o.animation.durations[k] = clamp(o.animation.durations[k], 0, 10000, 0);
+  if (typeof o.animation.easing !== "function" && !["smooth", "snappy", "linear", "bounce"].includes(o.animation.easing)) o.animation.easing = "smooth";
+  if (!["auto", "always", "hover"].includes(o.ui.controlsVisible)) o.ui.controlsVisible = "auto";
   const share = (v: number | null | undefined, lo: number, hi: number) => (v === null || v === undefined || !Number.isFinite(v) ? null : Math.min(hi, Math.max(lo, v)));
   o.livePosition = { x: share(o.livePosition.x, 0.05, 1), y: share(o.livePosition.y, 0.02, 0.98) };
   return o;

@@ -128,3 +128,13 @@ export function formatCountdown(ms: number): string {
 }
 
 export const MS = { SEC, MIN, HOUR, DAY, WEEK };
+
+/** A span like "30m", "4h", "1D", "1W", "1M" (month), "1Y" in ms, or null. "m" is minutes and "M" months; other units ignore case. */
+export function parseSpan(s: string): number | null {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([smhdwMyY]|[HDWS])\s*$/.exec(s);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const u = m[2] === "M" ? "M" : m[2].toLowerCase();
+  const unit: Record<string, number> = { s: MS.SEC, m: MS.MIN, h: MS.HOUR, d: MS.DAY, w: 7 * MS.DAY, M: 30 * MS.DAY, y: 365 * MS.DAY };
+  return n > 0 ? n * unit[u] : null;
+}

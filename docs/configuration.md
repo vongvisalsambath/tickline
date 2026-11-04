@@ -40,8 +40,8 @@ The most common settings also have their own attributes (see [Attributes](#attri
 - [livePosition](#liveposition): keep the live price at a fixed place on screen
 - [watermark](#watermark)
 - [interaction](#interaction): pan, zoom, keyboard, editing
-- [animation](#animation)
-- [history](#history): loading older candles
+- [animation](#animation): speed, durations and easing
+- [history](#history): loading older candles page by page
 - [drawings](#drawings)
 - [format](#format): your own number and date formats
 - [labels](#labels): every piece of text, for translation
@@ -64,7 +64,7 @@ The most common settings also have their own attributes (see [Attributes](#attri
 | `fps` | `60` | Frame-rate cap while prices are moving (1–240). Lower it to save battery on dashboards with many charts |
 | `theme` | `"dark"` | See [theme](#theme) |
 
-Shorthands kept for convenience: `animate` (= `animation.enabled`), `countdown` (= `lastPrice.countdown`), `priceLine` (= `lastPrice.line`), `rightPadding` (= `timeScale.rightPadding`), `minVisibleCandles` (= `timeScale.minVisibleCandles`), `emphasisDigits` (= `lastPrice.emphasisDigits`).
+Shorthands kept for convenience: `animate` (= `animation.enabled`), `animationSpeed` (= `animation.speed`), `countdown` (= `lastPrice.countdown`), `priceLine` (= `lastPrice.line`), `rightPadding` (= `timeScale.rightPadding`), `minVisibleCandles` (= `timeScale.minVisibleCandles`), `emphasisDigits` (= `lastPrice.emphasisDigits`).
 
 ## layout
 
@@ -192,6 +192,7 @@ Large, faint text behind the candles.
 | Setting | Default | |
 |---|---|---|
 | `interaction.pan` | `true` | Drag, swipe and arrow keys move through time |
+| `interaction.axisScale` | `true` | Drag the price axis to stretch prices and the time axis to zoom; double-click an axis to reset it. See [Zoom](zoom.md) |
 | `interaction.wheelZoom` | `true` | Mouse wheel and trackpad zoom. With `false` the page scrolls normally over the chart |
 | `interaction.pinchZoom` | `true` | Two-finger pinch zoom |
 | `interaction.keyboard` | `true` | Keyboard shortcuts when the chart has focus |
@@ -211,16 +212,34 @@ chart.setOptions({ interaction: { pan: false, wheelZoom: false, pinchZoom: false
 
 | Setting | Default | |
 |---|---|---|
-| `animation.enabled` | `true` | Smooth live price and price scale. Always off when the user's system asks for reduced motion |
-| `animation.priceSmoothing` | `110` | How quickly the drawn price catches up with the last trade, in ms. Lower is snappier |
-| `animation.scaleSmoothing` | `140` | How quickly the price scale adjusts, in ms |
+| `animation.enabled` | `true` | All animation on or off (`animate` is a shorthand) |
+| `animation.speed` | `1` | Speed of every animation: `2` is twice as fast, `0.5` half (0.05–20; `animationSpeed` is a shorthand) |
+| `animation.easing` | `"smooth"` | `"smooth"`, `"snappy"`, `"linear"`, `"bounce"`, or a function from 0–1 to 0–1 |
+| `animation.respectReducedMotion` | `true` | Turn animation off when the user's system asks for reduced motion |
+| `animation.durations.intro` | `700` | Candles rising in when an empty chart gets data, in ms at speed 1; `0` turns it off |
+| `animation.durations.newCandle` | `250` | A new candle widening in |
+| `animation.durations.zoom` | `250` | Zoom buttons, keys, wheel, `zoomIn`, `zoomOut`, `zoomBy`, `resetZoom` |
+| `animation.durations.scroll` | `400` | `goLive`, `scrollToTime`, `setVisibleRange`, `fitContent`, `zoomTo` |
+| `animation.durations.typeChange` | `300` | Cross-fade when the chart type changes |
+| `animation.durations.overlays` | `200` | Price lines, markers, zones, alerts and shapes fading in and out |
+| `animation.durations.history` | `300` | Older candles fading in after a page loads |
+| `animation.durations.panes` | `250` | Indicator panes sliding open and closed |
+| `animation.priceSmoothing` | `110` | How quickly the drawn price catches up with the last trade, in ms. Lower is snappier. Divided by `speed` |
+| `animation.scaleSmoothing` | `140` | How quickly the price scale adjusts, in ms. Divided by `speed` |
+
+See [Animation](animation.md).
 
 ## history
 
 | Setting | Default | |
 |---|---|---|
-| `history.request` | `true` | Fire `requesthistory` when the user scrolls near the oldest candle |
+| `history.request` | `true` | Ask for older candles (`requesthistory`, or the history loader) when the user scrolls near the oldest one |
 | `history.threshold` | `0.25` | How near, as a share of the chart width |
+| `history.pageSize` | `500` | Candles asked for per page (`count` for the loader and the event) |
+| `history.maxCandles` | `100000` | Most candles kept; the oldest ones out of view are dropped past it. `0` for no limit |
+| `history.indicatorWindow` | `20000` | Above this many candles, indicators are computed for the part in view plus a warm-up. `0` always uses every candle |
+
+See [Loading history page by page](data.md#loading-history-page-by-page).
 
 ## drawings
 
@@ -280,6 +299,10 @@ Every piece of text the chart shows, for translation. `{n}` in `zoomLimit` becom
 | `labels.screenshot` | `"Download image"` |
 | `labels.fullscreen`, `exitFullscreen` | `"Full screen"`, `"Exit full screen"` |
 | `labels.loading` | `"Loading…"` |
+| `labels.loadingHistory` | `"Loading older data…"` |
+| `labels.historyStart` | `"Start of history"` |
+| `labels.historyError`, `retry` | `"Couldn't load older data"`, `"Retry"` |
+| `labels.showRange` | `"Show"` (start of the range buttons' accessible names, e.g. "Show 1D") |
 | `labels.lock`, `unlock`, `duplicate`, `hide` | `"Lock"`, `"Unlock"`, `"Duplicate"`, `"Hide"` |
 | `labels.alert` | `"Alert"` (default text by price alerts) |
 | `labels.textPlaceholder`, `editText` | `"Text"`, `"Edit text"` (text drawings) |
@@ -306,7 +329,10 @@ The HTML controls of `<trade-chart>`. The `Chart` class has no built-in buttons 
 
 | Setting | Default | |
 |---|---|---|
-| `ui.zoomButtons` | `true` | The − ⌖ + buttons that appear on hover |
+| `ui.zoomButtons` | `true` | The − ⌖ + buttons |
+| `ui.controlsVisible` | `"auto"` | When the button bar shows: `"auto"` on hover with a mouse and always on touch screens, `"always"`, or `"hover"` (after a tap on touch screens) |
+| `ui.rangeButtons` | `false` | Quick range buttons such as 1D, 1W and All. See [Zoom](zoom.md#quick-range-buttons) |
+| `ui.ranges` | `["30m", "1h", "4h", "1D", "1W", "All"]` | The ranges they offer |
 | `ui.liveButton` | `true` | The "Live ▸" button that appears after scrolling back |
 | `ui.drawingToolbar` | `true` | The drawing toolbar |
 | `ui.drawingTools` | all ten | Which tools it offers, in order: `["line", "trend", "arrow", "horizontal", "vertical", "rect", "circle", "fib", "measure", "text"]` |
@@ -317,9 +343,9 @@ The HTML controls of `<trade-chart>`. The `Chart` class has no built-in buttons 
 | `ui.fullscreenOrientation` | `"auto"` | Orientation in full screen: `"auto"` follows the device; `"landscape"` or `"portrait"` locks it where the browser allows (Android) and otherwise turns the chart (iPhone). See [Full screen](full-screen-and-images.md#portrait-and-landscape) |
 | `ui.rotateButton` | `true` | In full screen on touch screens, a button that switches between landscape and portrait |
 
-On touch screens the zoom, image and full-screen buttons appear when the user taps the chart. On small charts (narrower than 520 px or shorter than 420 px) the drawing tools fold into one pencil button.
+On touch screens the zoom, image and full-screen buttons stay visible (`ui.controlsVisible`). On small charts (narrower than 520 px or shorter than 420 px) the drawing tools fold into one pencil button.
 
-Each control has a `part` name for styling from outside: `chart`, `controls`, `live-button`, `drawing-tools`, `drawing-bar`, `text-editor` and `toast`.
+Each control has a `part` name for styling from outside: `chart`, `controls`, `live-button`, `range-buttons`, `drawing-tools`, `drawing-bar`, `text-editor` and `toast`.
 
 ```css
 trade-chart::part(drawing-tools) { top: 12px; }
@@ -398,6 +424,8 @@ Attributes set the most common settings without any JavaScript.
 | `right-padding` | `timeScale.rightPadding` | 0–0.9 |
 | `min-visible-candles` | `timeScale.minVisibleCandles` | A number |
 | `animate` | `animation.enabled` | `false` turns animation off |
+| `animation-speed` | `animation.speed` | `2` twice as fast, `0.5` half as fast |
+| `range-buttons` | `ui.rangeButtons`, `ui.ranges` | Present or `true` shows them; or a list such as `1h 4h 1D All` |
 | `crosshair` | `crosshair.mode` | `snap`, `free`, `hidden` |
 | `grid` | `grid` | `both`, `horizontal`, `vertical`, `none` |
 | `legend` | `legend.visible` | `false` hides it |

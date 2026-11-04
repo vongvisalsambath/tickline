@@ -17,7 +17,7 @@ import {
   Chart, TradeChartElement, defineTradeChart, syncCharts,
   defaultOptions, DEFAULT_LABELS, DARK, LIGHT, CSS_VARS,
   registerIndicator, getIndicator, listIndicators, sma, ema, rsi, stdev,
-  parseTimeframe, bucketStart, heikinAshi, FIB_LEVELS, TOOL_NAMES,
+  parseTimeframe, parseSpan, bucketStart, heikinAshi, FIB_LEVELS, TOOL_NAMES,
 } from "tickline";
 ```
 
@@ -42,7 +42,7 @@ Every attribute is listed in [Configuration → Attributes](configuration.md#att
 | `data` | Every candle (read); assigning is `setData(candles)` |
 | `drawings` | Every drawing (read); assigning is `setDrawings(list)` |
 | `selectedDrawing`, `drawingTool` | The selected drawing and the tool being placed, or `null` |
-| `indicatorList`, `alerts`, `shapes`, `visibleRange` | As on `Chart` |
+| `indicatorList`, `alerts`, `shapes`, `visibleRange`, `priceRange`, `autoScale`, `historyState` | As on `Chart` |
 | `isFullscreen` | Whether the chart fills the screen |
 | `fullscreenOrientation` | `"auto"`, `"landscape"` or `"portrait"`: what full screen was asked for |
 
@@ -58,7 +58,7 @@ Every attribute is listed in [Configuration → Attributes](configuration.md#att
 
 ### Before it's in the page
 
-`setOptions`, `setData`, `prependData`, `tick`, `update`, `setDrawings`, `setDrawingTool`, `setState`, `setLoading`, `setVisibleRange`, `scrollToTime`, `updateOverlay`, `removeOverlay`, `clearOverlays`, `updateIndicator`, `removeIndicator`, `clearIndicators`, `updateDrawing`, `removeDrawing` and `clearDrawings` can be called before the element is added to the page: they run when it is. Methods that return an id (`addMarker`, `addShape`, `addIndicator`, `addDrawing` …) and `addLayer` need it in the page, and throw otherwise.
+`setOptions`, `setData`, `prependData`, `tick`, `update`, `setDrawings`, `setDrawingTool`, `setState`, `setLoading`, `setHistoryLoader`, `reloadHistory`, `retryHistory`, `playIntro`, `zoomTo`, `setPriceRange`, `setVisibleRange`, `scrollToTime`, `updateOverlay`, `removeOverlay`, `clearOverlays`, `updateIndicator`, `removeIndicator`, `clearIndicators`, `updateDrawing`, `removeDrawing` and `clearDrawings` can be called before the element is added to the page: they run when it is. Methods that return an id (`addMarker`, `addShape`, `addIndicator`, `addDrawing` …) and `addLayer` need it in the page, and throw otherwise.
 
 ### `defineTradeChart(tag?)`
 
@@ -81,11 +81,16 @@ Creates a chart that fills `container` (give it a size). `options` is any [setti
 | Method or property | |
 |---|---|
 | `setData(candles: Candle[])` | Replace the history. Sorts, groups into the timeframe, merges duplicates |
-| `prependData(candles: Candle[])` | Add older candles without moving the view |
+| `prependData(candles: Candle[])` | Add older candles without moving the view. Returns how many were added |
+| `setHistoryLoader(loader \| null)` | Load candles page by page: the latest page into an empty chart, older pages as the user scrolls back, with the loading shown in the chart. Reloads when the timeframe or symbol changes. See [Loading history page by page](data.md#loading-history-page-by-page) |
+| `reloadHistory()` | Clear the candles and load the latest page again |
+| `retryHistory()` | Try the last failed page again |
+| `historyState` | `"idle"`, `"loading"`, `"error"` or `"end"` (no older data) |
 | `tick({ time, price, volume? })` | A live trade or quote. Older than the last one is ignored |
 | `update(candle: Candle)` | A whole live candle: replaces the last one with the same time, or adds a newer one |
 | `data` | Every candle, oldest first |
-| `setLoading(on: boolean)` | Show or hide a "Loading…" placeholder |
+| `setLoading(on: boolean)` | Show or hide the loading state inside the chart (placeholder candles when it's empty) |
+| `playIntro()` | Play the intro animation again (see [Animation](animation.md)) |
 | `loading` | Whether it's shown |
 
 See [Feeding data](data.md).
@@ -163,13 +168,23 @@ See [Drawings](drawing.md#drawings-the-users-tools).
 
 | Method or property | |
 |---|---|
-| `zoomIn()`, `zoomOut()` | One zoom step (`interaction.zoomStep`) |
-| `goLive()` | Back to the live price, following it |
+Methods that move the view animate (see [Animation](animation.md)) and take a last argument `{ animate?: boolean, duration?: number }`: `animate: false` jumps, `duration` sets this call's length in ms. See [Zoom and navigation](zoom.md).
+
+| Method or property | |
+|---|---|
+| `zoomIn(o?)`, `zoomOut(o?)` | One zoom step (`interaction.zoomStep`) |
+| `zoomBy(factor, o?)` | Zoom by a factor: `2` shows twice as much time, `0.5` half |
+| `zoomTo(range, o?)` | Show a span up to the live price: `"30m"`, `"4h"`, `"1D"`, `"1W"`, `"1M"`, `"1Y"`, or `"All"`. Throws on an unknown range |
+| `resetZoom(o?)` | Default zoom (`timeScale.defaultVisibleCandles`) and an automatic price scale |
+| `goLive(o?)` | Back to the live price, following it |
 | `isFollowing` | Whether it's following the live price |
-| `fitContent()` | Show the whole history |
+| `fitContent(o?)` | Show every loaded candle (up to `timeScale.maxVisibleCandles`) |
 | `visibleRange` | `{ from, to }` in ms |
-| `setVisibleRange({ from, to }, { follow? })` | Show this range; with `follow: true`, follow the live price at this zoom |
-| `scrollToTime(time, position = 0.5)` | Put `time` at `position` across the chart (0 left, 1 right) |
+| `setVisibleRange({ from, to }, { follow?, animate?, duration? })` | Show this range; with `follow: true`, follow the live price at this zoom |
+| `scrollToTime(time, position = 0.5, o?)` | Put `time` at `position` across the chart (0 left, 1 right) |
+| `setPriceRange({ min, max } \| null)` | Fix the price scale (as dragging the price axis does), or fit the prices in view again with `null` |
+| `priceRange` | `{ min, max }` on the price scale now |
+| `autoScale` | `true` while the price scale fits the prices in view |
 | `setCrosshair(time \| null)` | Show a vertical crosshair at a time (used by `syncCharts`) |
 | `setRotation(0 \| 90)` | Tell the chart it's shown turned a quarter clockwise, so touches land right. `<trade-chart>` does this for landscape full screen |
 | `screenRotation` | `0` or `90` |
@@ -214,7 +229,8 @@ On `<trade-chart>` they're DOM `CustomEvent`s named `tl-…` that bubble, with t
 
 | Event | `detail` | When |
 |---|---|---|
-| `tl-requesthistory` | `{ before }` | The user scrolled near the oldest candle; load candles before `before` |
+| `tl-requesthistory` | `{ before, count, respondWith }` | The user scrolled near the oldest candle; load `count` candles before `before`. Call `respondWith(promise)` right away to have the chart show the loading state and add them, or call `prependData` yourself |
+| `tl-historystate` | `{ state }` | History loading started (`"loading"`), finished (`"idle"`), failed (`"error"`) or reached the oldest data (`"end"`) |
 | `tl-crosshair` | `CrosshairInfo` or `null` | The pointer moved over the chart, or left it |
 | `tl-click` | `CrosshairInfo` | A click or tap on the chart (not a drag) |
 | `tl-rangechange` | `VisibleRange` | The time range in view changed |
@@ -257,6 +273,7 @@ Links charts so scrolling, zooming and the crosshair move together. `charts`: `C
 | Export | |
 |---|---|
 | `parseTimeframe(tf)` | `{ ms, unit, count }`; throws on an unknown timeframe |
+| `parseSpan(span)` | A range such as `"4h"`, `"1D"` or `"1M"` (30 days) in ms, or `null` |
 | `bucketStart(time, parsed)` | The start of the candle containing `time` |
 | `heikinAshi(candles)` | Heikin-Ashi candles from regular ones |
 | `FIB_LEVELS` | The default Fibonacci levels |
@@ -316,7 +333,14 @@ interface IndicatorDefinition {
   params: { name: string; default: number; min?: number; max?: number }[];
   compute(candles: readonly Candle[], params: Record<string, number>): IndicatorOutput;
   label(params: Record<string, number>): string;
+  window?: boolean; // false: always compute over every candle (see history.indicatorWindow)
 }
+
+interface AnimateOptions { animate?: boolean; duration?: number }
+interface HistoryRequest { before: number | null; count: number; timeframe: Timeframe; symbol: string; signal: AbortSignal | undefined }
+type HistoryLoader = (req: HistoryRequest) => Promise<readonly Candle[]> | readonly Candle[];
+type HistoryState = "idle" | "loading" | "error" | "end";
+type Easing = "smooth" | "snappy" | "linear" | "bounce" | ((t: number) => number);
 
 interface CrosshairInfo { time: number; price: number; candle: Candle | null }
 interface VisibleRange { from: number; to: number }
@@ -330,4 +354,4 @@ interface ChartState {
 type ThemeInput = "dark" | "light" | (Partial<Theme> & { base?: "dark" | "light" });
 ```
 
-`ChartOptions` (every field optional) and `ResolvedOptions` (every field filled in) are described in [Configuration](configuration.md); the group types are exported as `LayoutOptions`, `SeriesOptions`, `GridOptions`, `PriceScaleOptions`, `TimeScaleOptions`, `CrosshairOptions`, `LegendOptions`, `LastPriceOptions`, `LivePositionOptions`, `WatermarkOptions`, `InteractionOptions`, `AnimationOptions`, `HistoryOptions`, `DrawingOptions`, `FormatOptions`, `Labels` and `UiOptions`. `Theme` has the keys listed in [Configuration → theme](configuration.md#theme).
+`ChartOptions` (every field optional) and `ResolvedOptions` (every field filled in) are described in [Configuration](configuration.md); the group types are exported as `LayoutOptions`, `SeriesOptions`, `GridOptions`, `PriceScaleOptions`, `TimeScaleOptions`, `CrosshairOptions`, `LegendOptions`, `LastPriceOptions`, `LivePositionOptions`, `WatermarkOptions`, `InteractionOptions`, `AnimationOptions` (with `AnimationDurations`), `HistoryOptions`, `DrawingOptions`, `FormatOptions`, `Labels` and `UiOptions`. `Theme` has the keys listed in [Configuration → theme](configuration.md#theme).

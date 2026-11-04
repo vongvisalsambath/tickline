@@ -83,7 +83,9 @@ registerIndicator({
 chart.addIndicator("mid", { period: 14 }); // or indicators="mid:14"
 ```
 
-`compute` gets every candle (oldest first) and the parameters, and returns one value per candle. Use `NaN` where there's no value yet (the start of a moving average). It runs again only when the data changes, not every frame.
+`compute` gets the candles (oldest first) and the parameters, and returns one value per candle it was given. Use `NaN` where there's no value yet (the start of a moving average). It runs again only when the data changes, not every frame.
+
+On long histories (more than `history.indicatorWindow` candles, default 20,000) `compute` gets the candles around the view plus a warm-up of 20 × the largest parameter, not the whole history, so live updates stay fast. Moving averages, RSI, MACD and most other indicators give the same values this way. If yours needs every candle from the very first one (a running total, say), add `window: false` to its definition.
 
 What `compute` can return:
 

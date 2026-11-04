@@ -35,7 +35,7 @@ export function syncCharts(targets: SyncTarget[], o: SyncOptions = {}): () => vo
           if (b === a) continue;
           if (a.isFollowing && b.isFollowing && close(b.visibleRange, r)) continue;
           if (!a.isFollowing && close(b.visibleRange, r)) continue;
-          b.setVisibleRange(r, { follow: a.isFollowing });
+          b.setVisibleRange(r, { follow: a.isFollowing, animate: false });
         }
       }));
     }

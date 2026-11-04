@@ -5,7 +5,7 @@ import { parseIndicatorList } from "./indicators";
 import { POINTS_NEEDED, type Drawing, type DrawingTool } from "./drawings";
 import { applyOptions, defaultOptions, mergeDeep, type ChartOptions, type ResolvedOptions, type ThemeInput } from "./options";
 import type {
-  AlertOptions, Candle, ChartPoint, ChartType, ImageOptions, LayerOptions, MarkerOptions, PriceLineOptions, ShapeOptions, Theme, Tick, TimeLineOptions,
+  AlertOptions, AnimateOptions, Candle, ChartPoint, ChartType, HistoryLoader, HistoryState, ImageOptions, LayerOptions, MarkerOptions, PriceLineOptions, ShapeOptions, Theme, Tick, TimeLineOptions,
   VisibleRange, ZoneOptions,
 } from "./types";
 import type { ChartState } from "./chart";
@@ -15,7 +15,7 @@ const ATTRS = [
   "type", "timeframe", "theme", "symbol", "precision", "timezone", "locale", "fps", "font-size",
   "countdown", "price-line", "right-padding", "min-visible-candles", "emphasis-digits", "animate",
   "crosshair", "grid", "legend", "controls", "drawing-tools", "indicators", "options", "live-position", "watermark", "live-marker",
-  "fullscreen-orientation",
+  "fullscreen-orientation", "animation-speed", "range-buttons",
 ] as const;
 type Attr = (typeof ATTRS)[number];
 
@@ -39,6 +39,16 @@ const STYLE = `
 .wrap:hover .controls, .controls:focus-within { opacity: 1; pointer-events: auto; }
 /* touch screens have no hover: tapping the chart shows the buttons */
 @media (hover: none) { .wrap:focus-within .controls { opacity: 1; pointer-events: auto; } }
+/* ui.controlsVisible: "always", or "auto" (always on touch screens) */
+.ctl-always .controls { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .ctl-auto .controls { opacity: 1; pointer-events: auto; } }
+.ranges { position: absolute; left: 8px; bottom: 36px; display: flex; gap: 3px; max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none; }
+.ranges::-webkit-scrollbar { display: none; }
+.ranges button { height: 24px; min-width: 0; padding: 0 8px; font-size: 11px; flex: none; }
+.ranges button[aria-pressed="true"] { color: var(--tl-accent-text, #fff); background: var(--tl-accent, var(--_accent)); border-color: transparent; }
+.tooled:not(.compact) .ranges { left: 48px; max-width: calc(100% - 56px); }
+.mid .ranges { bottom: 70px; }
+.compact.ranged .live { bottom: 104px; }
 .controls .sep { width: 1px; height: 18px; margin: 0 3px; background: var(--tl-axis-line, var(--_line)); }
 button { font: 600 13px/1 var(--tl-font, system-ui, sans-serif); min-width: 30px; height: 28px; padding: 0 9px; border-radius: 7px; cursor: pointer;
   color: var(--tl-text-strong, var(--_fg)); background: var(--_bg); background: color-mix(in srgb, var(--tl-background, var(--_bg)) 80%, transparent);
@@ -124,6 +134,13 @@ function attributeOptions(name: Attr, v: string | null): ChartOptions {
     case "min-visible-candles": return { timeScale: { minVisibleCandles: num(v) ?? d.timeScale.minVisibleCandles } };
     case "emphasis-digits": return { lastPrice: { emphasisDigits: num(v) ?? d.lastPrice.emphasisDigits } };
     case "animate": return { animation: { enabled: bool(v, true) } };
+    case "animation-speed": return { animation: { speed: num(v) ?? d.animation.speed } };
+    case "range-buttons": {
+      // "true", "false", or the ranges: "1h 4h 1D All"
+      if (v === null || !bool(v, false) && v.trim() !== "") return { ui: { rangeButtons: false, ranges: d.ui.ranges } };
+      if (v.trim() === "" || /^(true|on|yes)$/i.test(v.trim())) return { ui: { rangeButtons: true, ranges: d.ui.ranges } };
+      return { ui: { rangeButtons: true, ranges: v.split(/[\s,]+/).filter(Boolean) } };
+    }
     case "crosshair": return { crosshair: { mode: v === "free" || v === "hidden" ? v : v === "false" || v === "none" ? "hidden" : "snap" } };
     case "grid": {
       const g = (v ?? "both").trim().toLowerCase();
@@ -204,6 +221,7 @@ export class TradeChartElement extends BaseElement {
         <button type="button" class="icon" data-a="rotate">${UI_ICONS.rotate}</button>
       </div>
       <button type="button" class="live" part="live-button" data-a="live"></button>
+      <div class="ranges off" part="range-buttons" role="toolbar"></div>
       <div class="tools" part="drawing-tools" role="toolbar">
         <button type="button" class="icon toggle" aria-expanded="false">${UI_ICONS.pencil}</button><div class="list"></div></div>
       <div class="selbar" part="drawing-bar" role="toolbar"><span class="swatches" style="display:contents"></span>
@@ -212,7 +230,7 @@ export class TradeChartElement extends BaseElement {
         <button type="button" class="act" data-del></button></div>
       <div class="toast" part="toast" role="status" aria-live="polite"></div>`;
     this.wrap = this.root.querySelector(".wrap")!;
-    this.wrap.append(...["controls", "live", "toast", "tools", "selbar"].map((c) => this.root.querySelector("." + c)!));
+    this.wrap.append(...["controls", "live", "ranges", "toast", "tools", "selbar"].map((c) => this.root.querySelector("." + c)!));
     this.liveBtn = this.root.querySelector(".live")!;
     this.toast = this.root.querySelector(".toast")!;
     this.setFallbackColours();
@@ -231,7 +249,7 @@ export class TradeChartElement extends BaseElement {
 
     const forward = <K extends keyof ChartEvents>(type: K) =>
       this._chart!.on(type, (detail) => this.dispatchEvent(new CustomEvent(`tl-${type}`, { detail, bubbles: true, composed: true })));
-    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange", "drawingschange", "drawingselect", "toolchange", "alert", "drawingcreate"] as const).forEach(forward);
+    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange", "drawingschange", "drawingselect", "toolchange", "alert", "drawingcreate", "historystate"] as const).forEach(forward);
     this.applyIndicatorAttribute();
     this.applyUi();
 
@@ -341,16 +359,35 @@ export class TradeChartElement extends BaseElement {
   removeDrawing(id: string): void { this.run((c) => c.removeDrawing(id)); }
   duplicateDrawing(id: string): string | null { return this._chart?.duplicateDrawing(id) ?? null; }
   clearDrawings(): void { this.run((c) => c.clearDrawings()); }
-  zoomIn(): void { this._chart?.zoomIn(); }
-  zoomOut(): void { this._chart?.zoomOut(); }
-  goLive(): void { this._chart?.goLive(); }
-  fitContent(): void { this._chart?.fitContent(); }
+  zoomIn(o?: AnimateOptions): void { this._chart?.zoomIn(o); }
+  zoomOut(o?: AnimateOptions): void { this._chart?.zoomOut(o); }
+  /** Zooms by a factor: 2 shows twice as much time, 0.5 half. */
+  zoomBy(factor: number, o?: AnimateOptions): void { this._chart?.zoomBy(factor, o); }
+  /** Shows a span up to the live edge: "30m", "4h", "1D", "1W", "1M", "1Y" or "All". */
+  zoomTo(range: string, o?: AnimateOptions): void { this.run((c) => c.zoomTo(range, o)); }
+  /** Back to the default zoom and an automatic price scale. */
+  resetZoom(o?: AnimateOptions): void { this._chart?.resetZoom(o); }
+  goLive(o?: AnimateOptions): void { this._chart?.goLive(o); }
+  fitContent(o?: AnimateOptions): void { this._chart?.fitContent(o); }
+  /** Fixes the price scale to a range, or back to automatic with null. */
+  setPriceRange(range: { min: number; max: number } | null): void { this.run((c) => c.setPriceRange(range)); }
+  get priceRange(): { min: number; max: number } { return this._chart?.priceRange ?? { min: 0, max: 0 }; }
+  get autoScale(): boolean { return this._chart?.autoScale ?? true; }
+  /** Loads candles page by page as the user scrolls back (and the first page when empty). null stops. */
+  setHistoryLoader(loader: HistoryLoader | null): void { this.run((c) => c.setHistoryLoader(loader)); }
+  /** Clears the candles and loads the latest page again. */
+  reloadHistory(): void { this.run((c) => c.reloadHistory()); }
+  /** Tries the last failed history page again. */
+  retryHistory(): void { this.run((c) => c.retryHistory()); }
+  get historyState(): HistoryState { return this._chart?.historyState ?? "idle"; }
+  /** Plays the intro animation again. */
+  playIntro(): void { this.run((c) => c.playIntro()); }
   /** The time range in view (ms). */
   get visibleRange(): VisibleRange { return this._chart?.visibleRange ?? { from: 0, to: 0 }; }
   /** Shows this time range; with { follow: true } keeps following the live price at this zoom. */
-  setVisibleRange(range: VisibleRange, opts?: { follow?: boolean }): void { this.run((c) => c.setVisibleRange(range, opts)); }
+  setVisibleRange(range: VisibleRange, opts?: { follow?: boolean } & AnimateOptions): void { this.run((c) => c.setVisibleRange(range, opts)); }
   /** Scrolls so `time` sits at `position` across the chart (0 left, 0.5 middle, 1 right). */
-  scrollToTime(time: number, position?: number): void { this.run((c) => c.scrollToTime(time, position)); }
+  scrollToTime(time: number, position?: number, o?: AnimateOptions): void { this.run((c) => c.scrollToTime(time, position, o)); }
   /** Shows a "Loading…" placeholder, or hides it. */
   setLoading(on: boolean): void { this.run((c) => c.setLoading(on)); }
   /** The chart as an image Blob (PNG by default). */
@@ -372,6 +409,7 @@ export class TradeChartElement extends BaseElement {
       if (!r.width) return;
       this.wrap.classList.toggle("compact", r.width < 520 || r.height < 420);
       this.wrap.classList.toggle("short", r.height < 420);
+      this.wrap.classList.toggle("mid", r.width < 760);
     };
     update();
     if (typeof ResizeObserver !== "undefined") { this.sizeObs = new ResizeObserver(update); this.sizeObs.observe(this.wrap); }
@@ -576,6 +614,18 @@ export class TradeChartElement extends BaseElement {
       else if (e.key === "Escape" && this.fakeFullscreen && !c.drawingTool && !c.selectedDrawing) void this.exitFullscreen();
     });
     this.liveBtn.addEventListener("click", () => c.goLive());
+    const ranges = root.querySelector<HTMLElement>(".ranges")!;
+    ranges.addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-range]");
+      if (!b) return;
+      try { c.zoomTo(b.dataset.range!); } catch (err) { console.warn(`Tickline: ${(err as Error).message}`); return; }
+      ranges.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    });
+    // the highlighted range no longer applies once the user zooms or scrolls away
+    const clearRange = () => ranges.querySelectorAll('[aria-pressed="true"]').forEach((x) => x.setAttribute("aria-pressed", "false"));
+    c.canvas.addEventListener("wheel", clearRange, { passive: true });
+    c.canvas.addEventListener("pointerdown", clearRange);
+    root.querySelector(".controls")!.addEventListener("click", clearRange);
     const tools = root.querySelector<HTMLElement>(".tools")!;
     tools.addEventListener("click", (e) => {
       const target = e.target as HTMLElement;
@@ -698,6 +748,14 @@ export class TradeChartElement extends BaseElement {
     // the bar is shown when any of its buttons are
     controls.classList.toggle("off", !ui.zoomButtons && !ui.screenshotButton && !ui.fullscreenButton);
     controls.querySelectorAll<HTMLElement>('[data-a="out"], [data-a="live"], [data-a="in"]').forEach((b) => b.classList.toggle("off", !ui.zoomButtons));
+    this.wrap.classList.toggle("ctl-always", ui.controlsVisible === "always");
+    this.wrap.classList.toggle("ctl-auto", ui.controlsVisible === "auto");
+    const ranges = root.querySelector<HTMLElement>(".ranges")!;
+    const rangeHtml = ui.ranges.map((r) => `<button type="button" data-range="${esc(r)}" aria-label="${esc(`${L.showRange} ${r}`)}">${esc(r)}</button>`).join("");
+    if (ranges.innerHTML !== rangeHtml) ranges.innerHTML = rangeHtml;
+    ranges.setAttribute("aria-label", L.showRange);
+    ranges.classList.toggle("off", !ui.rangeButtons || ui.ranges.length === 0);
+    this.wrap.classList.toggle("ranged", ui.rangeButtons && ui.ranges.length > 0);
     this.liveBtn.textContent = L.live;
     this.liveBtn.setAttribute("aria-label", L.backToLive);
     this.liveBtn.classList.toggle("show", !this.following && ui.liveButton);
@@ -705,6 +763,7 @@ export class TradeChartElement extends BaseElement {
     const tools = root.querySelector<HTMLElement>(".tools")!;
     const list = ui.drawingTools.filter((t) => t in ICONS);
     tools.classList.toggle("off", !ui.drawingToolbar || list.length === 0);
+    this.wrap.classList.toggle("tooled", ui.drawingToolbar && list.length > 0);
     tools.setAttribute("aria-label", L.drawingTools);
     const toggle = tools.querySelector<HTMLElement>(".toggle")!;
     toggle.setAttribute("aria-label", L.drawingTools);

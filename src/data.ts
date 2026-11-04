@@ -30,6 +30,13 @@ export class CandleStore {
     return older.length;
   }
 
+  /** Removes the oldest candles (to keep memory bounded). Returns how many were removed. */
+  dropOldest(count: number): number {
+    const n = Math.max(0, Math.min(Math.floor(count), this.candles.length));
+    if (n > 0) this.candles = this.candles.slice(n);
+    return n;
+  }
+
   /**
    * Adds or replaces one whole candle (e.g. from a kline stream). A candle for the current
    * bucket replaces it; a newer one is appended; an older one is ignored.

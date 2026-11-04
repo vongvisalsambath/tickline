@@ -82,9 +82,9 @@ function init() {
       timeScale: { rightPadding: +v("rightPadding"), visible: on("timeScale") },
       priceScale: { visible: on("priceScale") },
       legend: { visible: on("legend") },
-      ui: { drawingToolbar: on("toolbar"), zoomButtons: on("zoomButtons") },
-      interaction: { pan: on("pan"), wheelZoom: on("wheelZoom") },
-      animation: { enabled: on("animate") },
+      ui: { drawingToolbar: on("toolbar"), zoomButtons: on("zoomButtons"), rangeButtons: on("ranges") },
+      interaction: { pan: on("pan"), wheelZoom: on("wheelZoom"), axisScale: on("axisScale") },
+      animation: { enabled: on("animate"), speed: +v("speed"), easing: v("easing") },
       locale: LANGS[v("lang")]?.locale ?? "",
       labels: LANGS[v("lang")]?.labels ?? defaultLabels(),
     };
@@ -143,9 +143,9 @@ const defaults = {
   timeScale: { rightPadding: 0.2, visible: true },
   priceScale: { visible: true },
   legend: { visible: true },
-  ui: { drawingToolbar: true, zoomButtons: true },
-  interaction: { pan: true, wheelZoom: true },
-  animation: { enabled: true },
+  ui: { drawingToolbar: true, zoomButtons: true, rangeButtons: false },
+  interaction: { pan: true, wheelZoom: true, axisScale: true },
+  animation: { enabled: true, speed: 1, easing: "smooth" },
 };
 
 function defaultLabels() {

@@ -61,6 +61,7 @@ async function start() {
   chart.setAttribute("symbol", market.label);
   chart.setAttribute("timeframe", tf);
   setStatus("connecting");
+  chart.setData([]);       // empty: placeholder candles while it loads, then the intro animation
   chart.setLoading(true);
   let candles;
   try {
@@ -77,19 +78,18 @@ async function start() {
   stop = subscribe(market, (t) => { lastPrice = t.price; chart.tick(t); }, setStatus);
 }
 
-chart.addEventListener("tl-requesthistory", async (e) => {
-  const token = loadToken;
-  try {
-    let older = await loadHistory(market, tf, e.detail.before);
-    if (token !== loadToken || !older.length) return;
-    if (!market.live) {
+// older candles page by page as the user scrolls back; the chart shows the loading (and any error, with Retry) itself
+chart.addEventListener("tl-requesthistory", (e) => {
+  const { before, count, respondWith } = e.detail;
+  respondWith(loadHistory(market, tf, before, count).then((older) => {
+    if (!market.live && older.length) {
       // line the simulated history up with the oldest candle on the chart
       const first = chart.chart.data[0];
       const shift = first.open - older.at(-1).close;
       older = older.map((c) => ({ ...c, open: c.open + shift, high: c.high + shift, low: c.low + shift, close: c.close + shift }));
     }
-    chart.prependData(older);
-  } catch { /* try again on the next scroll */ }
+    return older;
+  }));
 });
 
 // ------------------------------------------------------------------ practice positions (demo of the overlay API)

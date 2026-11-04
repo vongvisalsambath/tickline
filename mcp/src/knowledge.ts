@@ -2,23 +2,28 @@
 // a validator for settings objects, and integration snippets. Pure functions, so they're easy to test.
 import readme from "../../README.md";
 import configuration from "../../docs/configuration.md";
+import data from "../../docs/data.md";
+import zoom from "../../docs/zoom.md";
+import animation from "../../docs/animation.md";
+import api from "../../docs/api.md";
 import { applyOptions, defaultOptions, type ChartOptions, type ResolvedOptions } from "../../src/options";
 import { listIndicators } from "../../src/indicators";
-import { parseTimeframe } from "../../src/time";
+import { parseSpan, parseTimeframe } from "../../src/time";
 
 declare const __TICKLINE_VERSION__: string;
 export const VERSION: string = typeof __TICKLINE_VERSION__ === "string" ? __TICKLINE_VERSION__ : "0.0.0";
 
 // ------------------------------------------------------------------ docs
 
-export interface DocSection { id: string; title: string; source: "readme" | "configuration"; text: string }
+export interface DocSection { id: string; title: string; source: "readme" | "configuration" | "data" | "zoom" | "animation" | "api"; text: string }
+const FIRST_TITLE: Record<DocSection["source"], string> = { readme: "Overview", configuration: "Configuration", data: "Feeding data", zoom: "Zoom and navigation", animation: "Animation", api: "API reference" };
 
 const slug = (s: string) => s.toLowerCase().replace(/`/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 /** Splits markdown into sections at ## and ### headings (code blocks are left alone). */
 export function splitSections(md: string, source: DocSection["source"]): DocSection[] {
   const out: DocSection[] = [];
-  let title = source === "readme" ? "Overview" : "Configuration", lines: string[] = [], inCode = false;
+  let title = FIRST_TITLE[source], lines: string[] = [], inCode = false;
   const flush = () => { const text = lines.join("\n").trim(); if (text) out.push({ id: `${source}/${slug(title)}`, title, source, text }); };
   for (const line of md.split("\n")) {
     if (line.startsWith("```")) inCode = !inCode;
@@ -29,7 +34,10 @@ export function splitSections(md: string, source: DocSection["source"]): DocSect
   return out;
 }
 
-export const SECTIONS: DocSection[] = [...splitSections(readme, "readme"), ...splitSections(configuration, "configuration")];
+export const SECTIONS: DocSection[] = [
+  ...splitSections(readme, "readme"), ...splitSections(configuration, "configuration"), ...splitSections(data, "data"),
+  ...splitSections(zoom, "zoom"), ...splitSections(animation, "animation"), ...splitSections(api, "api"),
+];
 export const DOCS = { readme, configuration };
 
 /** Sections ranked by how well they match the words in `query`. */
@@ -106,12 +114,14 @@ const ENUMS: Record<string, readonly unknown[]> = {
   "lastPrice.line": ["short", "full", "none"],
   "lastPrice.countdownDirection": ["down", "up"],
   "ui.fullscreenOrientation": ["auto", "landscape", "portrait"],
+  "ui.controlsVisible": ["auto", "always", "hover"],
   priceLine: ["short", "full", "none"],
 };
 const TOOLS = ["line", "trend", "arrow", "horizontal", "vertical", "rect", "circle", "fib", "measure", "text"];
 const MARKERS = ["pulse", "ripple", "radar", "glow", "dot", "none"];
+const EASINGS = ["smooth", "snappy", "linear", "bounce"];
 const SHORTHANDS: Record<string, string> = {
-  animate: "boolean", countdown: "boolean", priceLine: "string", rightPadding: "number", minVisibleCandles: "number", emphasisDigits: "number",
+  animate: "boolean", animationSpeed: "number", countdown: "boolean", priceLine: "string", rightPadding: "number", minVisibleCandles: "number", emphasisDigits: "number",
 };
 const THEME_KEYS = Object.keys(defaultTheme());
 
@@ -140,6 +150,17 @@ export function validateOptions(input: unknown): { valid: boolean; problems: Pro
     if (path === "lastPrice.marker") {
       if (typeof value === "function") return;
       if (!MARKERS.includes(value as string)) problems.push({ path, message: `One of ${MARKERS.map((m) => JSON.stringify(m)).join(", ")}, or a function (from JavaScript).` });
+      return;
+    }
+    if (path === "animation.easing") {
+      if (typeof value === "function") return;
+      if (!EASINGS.includes(value as string)) problems.push({ path, message: `One of ${EASINGS.map((m) => JSON.stringify(m)).join(", ")}, or a function (from JavaScript).` });
+      return;
+    }
+    if (path === "ui.ranges") {
+      if (!Array.isArray(value)) { problems.push({ path, message: 'A list of ranges such as ["1h", "1D", "All"].' }); return; }
+      value.filter((r) => typeof r !== "string" || (!/^all$/i.test(r.trim()) && parseSpan(r) === null))
+        .forEach((r) => problems.push({ path, message: `Unknown range ${JSON.stringify(r)}. Use a number and s, m, h, D, W, M or Y, or "All".` }));
       return;
     }
     if (path === "precision") { if (value !== "auto" && !(typeof value === "number" && value >= 0)) problems.push({ path, message: 'A number of decimals or "auto".' }); return; }

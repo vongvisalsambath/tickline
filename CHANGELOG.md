@@ -8,7 +8,11 @@ The first release.
 
 - `<trade-chart>` element and `Chart` class: one canvas, HiDPI, smooth live prices with a gliding price, easing scale and candle countdown.
 - Chart types: candles, hollow candles, bars, Heikin-Ashi, line, area. Timeframes from 5 seconds to months.
-- Live data with `tick` and `update`, history with `setData` and `prependData`, older history on demand (`requesthistory`).
+- Live data with `tick` and `update`, history with `setData` and `prependData`.
+- History page by page with `setHistoryLoader` (or `respondWith` on `requesthistory`): placeholder candles, "Loading older data", start-of-history and Retry drawn inside the chart; reloads on timeframe or symbol change; `history.maxCandles` keeps memory bounded.
+- Long histories stay fast: indicators are computed around the view above `history.indicatorWindow` candles, and Heikin-Ashi updates at the end.
+- Animation for the whole chart: intro, new candles, zoom and scroll, chart-type cross-fade, panes, overlays and history fades, with `animation.speed`, per-kind `animation.durations`, `animation.easing` and per-call `{ animate, duration }`.
+- Zoom: `zoomTo("1D")`, `zoomBy`, `resetZoom`, quick range buttons, axis dragging to zoom time and stretch prices, `setPriceRange`; zoom buttons always visible on touch screens.
 - Indicators: SMA, EMA, Bollinger Bands, RSI, MACD and volume, in resizable panes, with per-indicator styles and custom indicators.
 - Overlays for positions: markers, price lines, time lines with countdowns, zones; price alerts.
 - Shapes from code (line, arrow, circle, ellipse, rect, polygon, path, text, image) and custom drawing layers.

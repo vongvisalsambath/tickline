@@ -32,6 +32,11 @@ export interface IndicatorDefinition {
   compute(candles: readonly Candle[], p: Record<string, number>): IndicatorOutput;
   /** Short label for the legend, e.g. "SMA 20". */
   label(p: Record<string, number>): string;
+  /**
+   * On long histories (history.indicatorWindow) the chart passes compute only the candles in view plus a
+   * warm-up of 10 × the largest parameter. Set false if the indicator needs every candle from the start (e.g. a running total).
+   */
+  window?: boolean;
 }
 
 // ------------------------------------------------------------------ math

@@ -44,18 +44,45 @@ chart.update({ time: 1793714700000, open: 1.1, high: 1.2, low: 1.0, close: 1.15,
 
 A candle with the same start time as the last one replaces it; a newer one is added; an older one is ignored.
 
-## Older history: `requesthistory`
+## Loading history page by page
 
-When the user scrolls near the oldest candle, the chart asks for more:
+Load a first page of candles, then older pages as the user scrolls back. The chart holds only what's been loaded, so it stays quick even when your server has years of data. Give it a **history loader**: a function that returns one page.
 
 ```js
-chart.addEventListener("tl-requesthistory", async (e) => {
-  const older = await api.candles({ before: e.detail.before }); // candles that start before this time
-  chart.prependData(older);
+chart.setHistoryLoader(async ({ before, count, timeframe, symbol, signal }) => {
+  // before: load candles older than this time (ms), or the latest ones when it's null
+  const url = `/api/candles?symbol=${symbol}&tf=${timeframe}&limit=${count}` + (before ? `&before=${before}` : "");
+  return (await fetch(url, { signal })).json(); // an array of candles, oldest first or in any order
 });
 ```
 
-It asks once per oldest candle, so it won't flood your API while the user keeps dragging. If there's no more history, do nothing. How close to the edge it asks is `history.threshold`; turn requests off with `history: { request: false }`.
+What happens:
+
+- **First page.** If the chart is empty, it asks for the latest `count` candles (`before: null`) and shows placeholder candles until they arrive. Candles that `tick` adds meanwhile are kept.
+- **Older pages.** When the user scrolls near the oldest candle (`history.threshold`, a quarter of the chart width by default), it asks for `count` candles before it. Placeholder candles shimmer in the empty space at the left with "Loading older data…", and the new candles fade in when they arrive. The view doesn't jump.
+- **The start.** An empty page means there's nothing older. The chart marks the first candle with "Start of history" and stops asking.
+- **Errors.** If the loader throws or its promise rejects, the chart shows "Couldn't load older data · Retry" at the left. Clicking it (or `chart.retryHistory()`) tries again.
+- **Changing timeframe or symbol** clears the candles and loads the first page again. Answers to requests that are no longer wanted are dropped, and `signal` is aborted so you can cancel the fetch.
+
+`count` is `history.pageSize` (default 500). `chart.historyState` is `"idle"`, `"loading"`, `"error"` or `"end"`, and the `historystate` event (`tl-historystate` on the element) fires when it changes. `chart.reloadHistory()` starts again from the latest page. `setHistoryLoader(null)` stops.
+
+All the words are in `labels` (`loading`, `loadingHistory`, `historyStart`, `historyError`, `retry`) for translation.
+
+### Answering the event instead
+
+Without a loader, the chart fires `requesthistory` (`tl-requesthistory` on the element) when it needs older candles. Answer with `respondWith` and the chart shows the loading state and adds them itself:
+
+```js
+chart.addEventListener("tl-requesthistory", (e) => {
+  e.detail.respondWith(api.candles({ before: e.detail.before, limit: e.detail.count }));
+});
+```
+
+Call `respondWith` straight away in the handler, with a promise (or an array). Or handle it all yourself and call `prependData(older)` when they arrive; then there's no loading state. Either way it asks once per oldest candle, so it won't flood your API while the user keeps dragging. Turn requests off with `history: { request: false }`.
+
+### Memory
+
+The chart keeps at most `history.maxCandles` candles (default 100,000). Past that, it drops the oldest ones that are well out of view, for example after the user scrolled far back and returned to the live price. With a loader, scrolling back loads them again. Set `maxCandles: 0` for no limit.
 
 ## Prices and decimals
 
@@ -99,7 +126,7 @@ async function switchTimeframe(tf) {
 ```js
 async function switchSymbol(symbol) {
   socket.close();
-  chart.setLoading(true);                 // a striped placeholder while it loads
+  chart.setLoading(true);                 // the loading state, inside the chart
   chart.setAttribute("symbol", symbol);
   chart.clearOverlays();                  // positions and alerts belonged to the old symbol
   chart.setData(await api.candles({ symbol }));
@@ -107,6 +134,8 @@ async function switchSymbol(symbol) {
   socket = openSocket(symbol);
 }
 ```
+
+With a [history loader](#loading-history-page-by-page), setting the symbol is enough: the chart clears its candles and loads the new symbol's latest page, showing placeholder candles meanwhile.
 
 Drawings are kept until you call `clearDrawings()` or `setDrawings(savedForThisSymbol)`; see [Several charts and saved charts](multiple-charts.md) for saving a chart per symbol.
 
