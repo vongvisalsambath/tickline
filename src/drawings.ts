@@ -1,6 +1,6 @@
 // Drawing tools: the shapes, how many points each needs, and screen-space hit testing.
 
-export type DrawingTool = "line" | "trend" | "horizontal" | "vertical" | "rect" | "fib" | "measure";
+export type DrawingTool = "line" | "trend" | "arrow" | "horizontal" | "vertical" | "rect" | "circle" | "fib" | "measure" | "text";
 
 export interface DrawingPoint { time: number; price: number }
 
@@ -16,13 +16,17 @@ export interface Drawing {
   locked?: boolean;
   /** Kept but not drawn. */
   hidden?: boolean;
+  /** The text of a text drawing. */
+  text?: string;
+  /** Font size of a text drawing in px. */
+  fontSize?: number;
 }
 
-export const POINTS_NEEDED: Record<DrawingTool, number> = { line: 2, trend: 2, horizontal: 1, vertical: 1, rect: 2, fib: 2, measure: 2 };
+export const POINTS_NEEDED: Record<DrawingTool, number> = { line: 2, trend: 2, arrow: 2, horizontal: 1, vertical: 1, rect: 2, circle: 2, fib: 2, measure: 2, text: 1 };
 
 export const TOOL_NAMES: Record<DrawingTool, string> = {
-  line: "Line", trend: "Trend line", horizontal: "Horizontal line", vertical: "Vertical line", rect: "Rectangle",
-  fib: "Fibonacci retracement", measure: "Measure",
+  line: "Line", trend: "Trend line", arrow: "Arrow", horizontal: "Horizontal line", vertical: "Vertical line", rect: "Rectangle",
+  circle: "Circle", fib: "Fibonacci retracement", measure: "Measure", text: "Text",
 };
 
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -65,7 +69,14 @@ export function distToDrawing(tool: DrawingTool, pts: XY[], p: XY, right: number
   switch (tool) {
     case "horizontal": return Math.abs(p.y - pts[0].y);
     case "vertical": return Math.abs(p.x - pts[0].x);
-    case "line": return distToSegment(p, pts[0], pts[1]);
+    case "line":
+    case "arrow": return distToSegment(p, pts[0], pts[1]);
+    case "circle": {
+      // inside counts as on it
+      const r = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      return Math.max(0, Math.hypot(p.x - pts[0].x, p.y - pts[0].y) - r);
+    }
+    case "text": return Infinity; // the chart hit-tests text by its drawn box
     case "trend": return distToSegment(p, pts[0], rayEnd(pts[0], pts[1], right, bottom));
     case "rect":
     case "measure": {

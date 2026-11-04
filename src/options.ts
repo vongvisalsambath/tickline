@@ -1,6 +1,6 @@
 // Every setting the chart has, its default, and how partial settings merge.
 // One object configures everything: new Chart(el, options), chart.setOptions(patch), or <trade-chart>.setOptions(patch).
-import type { ChartType, Theme, Timeframe } from "./types";
+import type { ChartType, LiveMarkerFn, Theme, Timeframe } from "./types";
 import type { DrawingTool } from "./drawings";
 
 export type LineStyle = "solid" | "dashed" | "dotted";
@@ -103,7 +103,9 @@ export interface LastPriceOptions {
   tag: boolean;
   /** How many trailing digits of the tag are drawn larger, 0 to turn off (default 3). */
   emphasisDigits: number;
-  /** The glowing dot at the live price, pulsing while live (default true). */
+  /** The animated marker at the live price: "pulse" (default), "ripple", "radar", "glow", "dot", "none", or your own function. */
+  marker: "pulse" | "ripple" | "radar" | "glow" | "dot" | "none" | LiveMarkerFn;
+  /** Shorthand: false is the same as marker: "none" (default true). */
   pulse: boolean;
   /** Time left in the current candle next to the live price (default true). */
   countdown: boolean;
@@ -219,6 +221,9 @@ export interface Labels {
   duplicate: string;
   hide: string;
   alert: string;
+  textPlaceholder: string;
+  editText: string;
+  rotate: string;
   tools: Record<DrawingTool, string>;
 }
 
@@ -240,6 +245,13 @@ export interface UiOptions {
   screenshotButton: boolean;
   /** A button that shows the chart full screen (default true). */
   fullscreenButton: boolean;
+  /**
+   * Screen orientation in full screen: "auto" (default) follows the device; "landscape" or "portrait"
+   * locks it where the browser allows (Android) and otherwise turns the chart sideways (iPhone).
+   */
+  fullscreenOrientation: "auto" | "landscape" | "portrait";
+  /** In full screen on touch screens, a button that switches between landscape and portrait (default true). */
+  rotateButton: boolean;
 }
 
 /** All settings, with every value filled in. `chart.options` returns this. */
@@ -320,9 +332,12 @@ export const DEFAULT_LABELS: Labels = {
   duplicate: "Duplicate",
   hide: "Hide",
   alert: "Alert",
+  textPlaceholder: "Text",
+  editText: "Edit text",
+  rotate: "Rotate",
   tools: {
-    line: "Line", trend: "Trend line", horizontal: "Horizontal line", vertical: "Vertical line", rect: "Rectangle",
-    fib: "Fibonacci retracement", measure: "Measure",
+    line: "Line", trend: "Trend line", arrow: "Arrow", horizontal: "Horizontal line", vertical: "Vertical line", rect: "Rectangle",
+    circle: "Circle", fib: "Fibonacci retracement", measure: "Measure", text: "Text",
   },
 };
 
@@ -342,7 +357,7 @@ export function defaultOptions(): ResolvedOptions {
     timeScale: { visible: true, labelSpacing: 110, rightPadding: 0.2, defaultVisibleCandles: 60, minVisibleCandles: 12, maxVisibleCandles: 3000 },
     crosshair: { mode: "snap", style: "dashed", labels: true },
     legend: { visible: true, symbol: true, ohlc: true, change: true, indicators: true },
-    lastPrice: { line: "short", tag: true, emphasisDigits: 3, pulse: true, countdown: true, countdownDirection: "down" },
+    lastPrice: { line: "short", tag: true, emphasisDigits: 3, marker: "pulse", pulse: true, countdown: true, countdownDirection: "down" },
     livePosition: { x: null, y: null },
     watermark: { text: "", color: "", fontSize: 0 },
     interaction: { pan: true, wheelZoom: true, pinchZoom: true, keyboard: true, doubleClickToLive: true, resizePanes: true, closeIndicators: true, editDrawings: true, zoomStep: 1.6 },
@@ -356,8 +371,9 @@ export function defaultOptions(): ResolvedOptions {
     format: {},
     labels: { ...DEFAULT_LABELS, tools: { ...DEFAULT_LABELS.tools } },
     ui: {
-      zoomButtons: true, liveButton: true, drawingToolbar: true, drawingTools: ["line", "trend", "horizontal", "vertical", "rect", "fib", "measure"],
+      zoomButtons: true, liveButton: true, drawingToolbar: true, drawingTools: ["line", "trend", "arrow", "horizontal", "vertical", "rect", "circle", "fib", "measure", "text"],
       drawingBar: true, zoomLimitMessage: true, screenshotButton: true, fullscreenButton: true,
+      fullscreenOrientation: "auto", rotateButton: true,
     },
   };
 }
@@ -387,6 +403,12 @@ export function applyOptions(current: ResolvedOptions, patch: ChartOptions): Res
   if (rightPadding !== undefined) o.timeScale.rightPadding = rightPadding;
   if (minVisibleCandles !== undefined) o.timeScale.minVisibleCandles = minVisibleCandles;
   if (emphasisDigits !== undefined) o.lastPrice.emphasisDigits = emphasisDigits;
+  // pulse: false is the old way to say marker: "none"; keep the two in step
+  const lpPatch = (rest as { lastPrice?: Partial<LastPriceOptions> }).lastPrice;
+  if (lpPatch && lpPatch.pulse !== undefined && lpPatch.marker === undefined) {
+    o.lastPrice.marker = lpPatch.pulse ? (o.lastPrice.marker === "none" ? "pulse" : o.lastPrice.marker) : "none";
+  }
+  o.lastPrice.pulse = o.lastPrice.marker !== "none";
   // keep values usable
   const clamp = (v: number, lo: number, hi: number, d: number) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
   o.fps = clamp(o.fps, 1, 240, 60);

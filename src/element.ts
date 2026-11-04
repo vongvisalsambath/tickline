@@ -4,14 +4,18 @@ import { DARK, LIGHT, resolveTheme } from "./theme";
 import { parseIndicatorList } from "./indicators";
 import { POINTS_NEEDED, type Drawing, type DrawingTool } from "./drawings";
 import { applyOptions, defaultOptions, mergeDeep, type ChartOptions, type ResolvedOptions, type ThemeInput } from "./options";
-import type { AlertOptions, Candle, ChartType, ImageOptions, MarkerOptions, PriceLineOptions, Theme, Tick, TimeLineOptions, VisibleRange, ZoneOptions } from "./types";
+import type {
+  AlertOptions, Candle, ChartPoint, ChartType, ImageOptions, LayerOptions, MarkerOptions, PriceLineOptions, ShapeOptions, Theme, Tick, TimeLineOptions,
+  VisibleRange, ZoneOptions,
+} from "./types";
 import type { ChartState } from "./chart";
 
 /** Attributes and the setting each one controls. Removing an attribute restores that setting's default. */
 const ATTRS = [
   "type", "timeframe", "theme", "symbol", "precision", "timezone", "locale", "fps", "font-size",
   "countdown", "price-line", "right-padding", "min-visible-candles", "emphasis-digits", "animate",
-  "crosshair", "grid", "legend", "controls", "drawing-tools", "indicators", "options", "live-position", "watermark",
+  "crosshair", "grid", "legend", "controls", "drawing-tools", "indicators", "options", "live-position", "watermark", "live-marker",
+  "fullscreen-orientation",
 ] as const;
 type Attr = (typeof ATTRS)[number];
 
@@ -23,6 +27,12 @@ const STYLE = `
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 :host(:fullscreen) { width: 100%; height: 100%; }
 .wrap { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
+/* landscape (or portrait) on a phone that can't lock the screen: the chart turns a quarter clockwise */
+:host([rotated]) .wrap { inset: auto !important; top: 0; left: 0; width: 100vh; width: 100dvh; height: 100vw;
+  transform-origin: top left; transform: translateX(100vw) rotate(90deg); }
+.texted { position: absolute; z-index: 3; min-width: 120px; max-width: 70%; padding: 4px 8px; border-radius: 6px; outline: none;
+  font: 600 14px var(--tl-font, system-ui, sans-serif); color: var(--tl-text-strong, var(--_fg)); background: var(--_bg);
+  border: 1px solid var(--tl-accent, var(--_accent)); box-shadow: 0 4px 16px rgba(0, 0, 0, .35); }
 :host([fullscreen]) .wrap { inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .controls { position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); display: flex; gap: 4px; align-items: center;
   opacity: 0; transition: opacity .2s; pointer-events: none; }
@@ -38,6 +48,8 @@ button:hover { border-color: var(--tl-accent, var(--_accent)); }
 button:focus-visible { outline: 2px solid var(--tl-accent, var(--_accent)); outline-offset: 1px; }
 button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .icon { width: 30px; min-width: 0; padding: 0; }
+.controls [data-a="rotate"] { display: none; }
+@media (hover: none) { :host([fullscreen]) .controls [data-a="rotate"]:not(.off) { display: inline-grid; } }
 .live { position: absolute; right: 76px; bottom: 36px; display: none; color: var(--tl-accent-text, #fff);
   background: var(--tl-accent, var(--_accent)); border-color: transparent; }
 .live.show { display: inline-flex; align-items: center; gap: 6px; }
@@ -70,6 +82,9 @@ button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke
 `;
 
 const ICONS: Record<DrawingTool, string> = {
+  arrow: '<path d="M3 13L13 3M7 3h6v6"/>',
+  circle: '<circle cx="8" cy="8" r="5.5"/>',
+  text: '<path d="M3 3.5h10M8 3.5V13M6 13h4"/>',
   rect: '<rect x="2.5" y="4" width="11" height="8" rx="1"/>',
   measure: '<path d="M8 2v12M2 8h12M5 5l3-3 3 3M5 11l3 3 3-3"/>',
   line: '<path d="M3 13L13 3"/><circle cx="3" cy="13" r="1.4"/><circle cx="13" cy="3" r="1.4"/>',
@@ -83,6 +98,7 @@ const UI_ICONS = {
   image: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7M5 6.5l3 3 3-3M2.5 11v2.5h11V11"/></svg>',
   expand: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>',
   shrink: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>',
+  rotate: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="2" width="7" height="12" rx="1.5"/><path d="M1.5 9.5a6 6 0 0 0 4 4M14.5 6.5a6 6 0 0 0-4-4"/></svg>',
   pencil: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12z"/><path d="M9.5 4l2.5 2.5"/></svg>',
 };
 
@@ -115,6 +131,14 @@ function attributeOptions(name: Attr, v: string | null): ChartOptions {
     }
     case "legend": return { legend: { visible: bool(v, true) } };
     case "watermark": return { watermark: { text: v ?? "" } };
+    case "live-marker": {
+      const m = (v ?? "").trim().toLowerCase();
+      return { lastPrice: { marker: (["pulse", "ripple", "radar", "glow", "dot", "none"].includes(m) ? m : "pulse") as "pulse" } };
+    }
+    case "fullscreen-orientation": {
+      const m = (v ?? "").trim().toLowerCase();
+      return { ui: { fullscreenOrientation: m === "landscape" || m === "portrait" ? m : "auto" } };
+    }
     case "live-position": {
       // "center", "0.5", "0.5 0.5", "0.8 0.3" (x then y); empty or removed for the default
       const t = (v ?? "").trim().toLowerCase();
@@ -143,7 +167,10 @@ function attributeOptions(name: Attr, v: string | null): ChartOptions {
  * Configure with attributes (common settings), the `options` attribute (JSON, every setting),
  * or `setOptions()` / the `options` property from JavaScript. Events are DOM events named tl-<event>.
  */
-export class TradeChartElement extends HTMLElement {
+// On the server (Next.js, Nuxt, SvelteKit, Angular SSR) there's no HTMLElement: use a stand-in so importing is safe.
+const BaseElement: typeof HTMLElement = typeof HTMLElement !== "undefined" ? HTMLElement : (class {} as unknown as typeof HTMLElement);
+
+export class TradeChartElement extends BaseElement {
   static get observedAttributes(): readonly string[] { return ATTRS; }
 
   private _chart: Chart | null = null;
@@ -174,6 +201,7 @@ export class TradeChartElement extends HTMLElement {
         <span class="sep" aria-hidden="true"></span>
         <button type="button" class="icon" data-a="image">${UI_ICONS.image}</button>
         <button type="button" class="icon" data-a="fullscreen">${UI_ICONS.expand}</button>
+        <button type="button" class="icon" data-a="rotate">${UI_ICONS.rotate}</button>
       </div>
       <button type="button" class="live" part="live-button" data-a="live"></button>
       <div class="tools" part="drawing-tools" role="toolbar">
@@ -203,7 +231,7 @@ export class TradeChartElement extends HTMLElement {
 
     const forward = <K extends keyof ChartEvents>(type: K) =>
       this._chart!.on(type, (detail) => this.dispatchEvent(new CustomEvent(`tl-${type}`, { detail, bubbles: true, composed: true })));
-    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange", "drawingschange", "drawingselect", "toolchange", "alert"] as const).forEach(forward);
+    (["crosshair", "rangechange", "requesthistory", "zoomlimit", "followchange", "click", "indicatorschange", "drawingschange", "drawingselect", "toolchange", "alert", "drawingcreate"] as const).forEach(forward);
     this.applyIndicatorAttribute();
     this.applyUi();
 
@@ -273,6 +301,19 @@ export class TradeChartElement extends HTMLElement {
   addPriceLine(o: PriceLineOptions): string { return this.runId((c) => c.addPriceLine(o)); }
   addTimeLine(o: TimeLineOptions): string { return this.runId((c) => c.addTimeLine(o)); }
   addZone(o: ZoneOptions): string { return this.runId((c) => c.addZone(o)); }
+  /** A shape from code (line, arrow, circle, ellipse, rect, polygon, path, text, image). Returns its id. */
+  addShape(o: ShapeOptions): string { return this.runId((c) => c.addShape(o)); }
+  get shapes() { return this._chart?.shapes ?? []; }
+  /** Draws anything on the chart every frame. Returns a function that removes the layer. */
+  addLayer(draw: Parameters<Chart["addLayer"]>[0], o?: LayerOptions): () => void {
+    if (this._chart) return this._chart.addLayer(draw, o);
+    throw new Error("<trade-chart> must be in the document before adding layers.");
+  }
+  /** Where a time and price are on screen, and back. */
+  toScreen(p: ChartPoint): { x: number; y: number } { return this._chart?.toScreen(p) ?? { x: NaN, y: NaN }; }
+  fromScreen(p: { x: number; y: number }): ChartPoint { return this._chart?.fromScreen(p) ?? { time: NaN, price: NaN }; }
+  /** Opens the text editor on a text drawing. */
+  editText(id: string): void { this.openTextEditor(id, false); }
   /** A price alert: fires the tl-alert event when the price crosses it. Returns its id (remove with removeOverlay). */
   addAlert(o: AlertOptions): string { return this.runId((c) => c.addAlert(o)); }
   get alerts() { return this._chart?.alerts ?? []; }
@@ -285,7 +326,11 @@ export class TradeChartElement extends HTMLElement {
   removeIndicator(key: string): void { this.run((c) => c.removeIndicator(key)); }
   clearIndicators(): void { this.attrIndicatorKeys = []; this.run((c) => c.clearIndicators()); }
   get indicatorList() { return this._chart?.indicatorList ?? []; }
-  /** Starts placing a drawing ("line", "trend", "horizontal", "vertical", "fib"), or stops with null. */
+  /** The drawing the user has selected, or null. */
+  get selectedDrawing(): Drawing | null { return this._chart?.selectedDrawing ?? null; }
+  /** The drawing tool being placed, or null. */
+  get drawingTool(): DrawingTool | null { return this._chart?.drawingTool ?? null; }
+  /** Starts placing a drawing ("line", "trend", "arrow", "horizontal", "vertical", "rect", "circle", "fib", "measure", "text"), or stops with null. */
   setDrawingTool(tool: DrawingTool | null): void { this.run((c) => c.setDrawingTool(tool)); }
   /** All drawings as plain data (store it as JSON to restore later with setDrawings). */
   get drawings(): Drawing[] { return this._chart?.drawings ?? []; }
@@ -323,7 +368,7 @@ export class TradeChartElement extends HTMLElement {
   /** Marks small charts so the controls take less room. */
   private watchSize(): void {
     const update = () => {
-      const r = this.wrap.getBoundingClientRect();
+      const r = { width: this.wrap.offsetWidth || this.wrap.getBoundingClientRect().width, height: this.wrap.offsetHeight || this.wrap.getBoundingClientRect().height };
       if (!r.width) return;
       this.wrap.classList.toggle("compact", r.width < 520 || r.height < 420);
       this.wrap.classList.toggle("short", r.height < 420);
@@ -344,8 +389,14 @@ export class TradeChartElement extends HTMLElement {
    * Fills the screen with the chart. Uses the browser's full-screen mode where it's allowed, and
    * otherwise (e.g. iPhone Safari) covers the page. Fires tl-fullscreenchange.
    */
-  async enterFullscreen(): Promise<void> {
-    if (this.isFullscreen) return;
+  private orientation: "auto" | "landscape" | "portrait" = "auto";
+  private locked = false;
+  /** The orientation asked for in full screen. */
+  get fullscreenOrientation(): "auto" | "landscape" | "portrait" { return this.orientation; }
+
+  async enterFullscreen(o: { orientation?: "auto" | "landscape" | "portrait" } = {}): Promise<void> {
+    this.orientation = o.orientation ?? this._chart?.options.ui.fullscreenOrientation ?? "auto";
+    if (this.isFullscreen) { await this.applyOrientation(); return; }
     const el = this as Omit<HTMLElement, "requestFullscreen"> & { requestFullscreen?: HTMLElement["requestFullscreen"]; webkitRequestFullscreen?: () => void };
     const doc = document as Document & { webkitFullscreenEnabled?: boolean };
     const native = el.requestFullscreen ? doc.fullscreenEnabled : el.webkitRequestFullscreen ? doc.webkitFullscreenEnabled : false;
@@ -354,6 +405,7 @@ export class TradeChartElement extends HTMLElement {
         this.toggleAttribute("fullscreen", true);
         if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: "hide" }); else el.webkitRequestFullscreen!();
         this.fakeFullscreen = false;
+        await this.applyOrientation();
         this.fullscreenChanged();
         return;
       } catch { /* not allowed here: fall back to covering the page */ }
@@ -362,7 +414,42 @@ export class TradeChartElement extends HTMLElement {
     this.savedOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = "hidden";
     this.toggleAttribute("fullscreen", true);
+    await this.applyOrientation();
     this.fullscreenChanged();
+  }
+
+  /** Switches full screen between landscape and portrait (on phones). */
+  async rotate(): Promise<void> {
+    const portraitNow = this.rotated ? !this.screenIsPortrait() : this.screenIsPortrait();
+    this.orientation = portraitNow ? "landscape" : "portrait";
+    if (!this.isFullscreen) await this.enterFullscreen({ orientation: this.orientation });
+    else await this.applyOrientation();
+    this.fullscreenChanged();
+  }
+
+  private get rotated(): boolean { return this.hasAttribute("rotated"); }
+  private screenIsPortrait(): boolean { return window.innerHeight > window.innerWidth; }
+
+  /** Locks the screen to the orientation asked for, or turns the chart where locking isn't possible. */
+  private async applyOrientation(): Promise<void> {
+    const want = this.orientation;
+    const so = (screen as Screen & { orientation?: ScreenOrientation & { lock?: (o: string) => Promise<void> } }).orientation;
+    this.locked = false;
+    if (want !== "auto" && !this.fakeFullscreen && so?.lock) {
+      try { await so.lock(want); this.locked = true; } catch { /* not allowed (desktop, iPhone): turn the chart instead */ }
+    } else if (want === "auto" && so?.unlock) {
+      try { so.unlock(); } catch { /* nothing locked */ }
+    }
+    this.updateRotation();
+  }
+
+  private updateRotation(): void {
+    const want = this.orientation;
+    const portrait = this.screenIsPortrait();
+    const turn = this.isFullscreen && !this.locked && want !== "auto" && (want === "landscape" ? portrait : !portrait);
+    if (turn === this.rotated) return;
+    this.toggleAttribute("rotated", turn);
+    this._chart?.setRotation(turn ? 90 : 0);
   }
 
   async exitFullscreen(): Promise<void> {
@@ -374,6 +461,9 @@ export class TradeChartElement extends HTMLElement {
     if (this.fakeFullscreen) document.documentElement.style.overflow = this.savedOverflow;
     this.fakeFullscreen = false;
     this.toggleAttribute("fullscreen", false);
+    if (this.locked) { try { screen.orientation?.unlock?.(); } catch { /* already unlocked */ } }
+    this.locked = false;
+    this.updateRotation();
     this.fullscreenChanged();
   }
 
@@ -388,7 +478,11 @@ export class TradeChartElement extends HTMLElement {
       b.setAttribute("aria-label", on ? L.exitFullscreen : L.fullscreen);
       b.title = `${on ? L.exitFullscreen : L.fullscreen} (F)`;
     }
-    this.dispatchEvent(new CustomEvent("tl-fullscreenchange", { detail: { fullscreen: on }, bubbles: true, composed: true }));
+    const rot = this.root?.querySelector<HTMLElement>('[data-a="rotate"]');
+    if (rot && this._chart) { rot.setAttribute("aria-label", this._chart.options.labels.rotate); rot.title = this._chart.options.labels.rotate; }
+    this.dispatchEvent(new CustomEvent("tl-fullscreenchange", {
+      detail: { fullscreen: on, orientation: this.orientation, rotated: this.rotated }, bubbles: true, composed: true,
+    }));
   }
 
   private run(f: (c: Chart) => void): void {
@@ -459,13 +553,20 @@ export class TradeChartElement extends HTMLElement {
       if (a === "in") c.zoomIn(); else if (a === "out") c.zoomOut(); else if (a === "live") c.goLive();
       else if (a === "image") void c.downloadImage();
       else if (a === "fullscreen") void this.toggleFullscreen();
+      else if (a === "rotate") void this.rotate();
     });
     // leaving the browser's full screen with Esc or a gesture
     const onNativeChange = () => {
       const doc = document as Document & { webkitFullscreenElement?: Element };
       const current = document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
-      if (this.isFullscreen && !this.fakeFullscreen && current !== this) { this.toggleAttribute("fullscreen", false); this.fullscreenChanged(); }
+      if (this.isFullscreen && !this.fakeFullscreen && current !== this) {
+        this.toggleAttribute("fullscreen", false);
+        this.locked = false;
+        this.updateRotation();
+        this.fullscreenChanged();
+      }
     };
+    window.addEventListener("resize", () => this.updateRotation());
     document.addEventListener("fullscreenchange", onNativeChange);
     document.addEventListener("webkitfullscreenchange", onNativeChange);
     // F toggles full screen; Esc leaves the page-covering mode
@@ -501,6 +602,11 @@ export class TradeChartElement extends HTMLElement {
       this.markSwatches(color);
     });
     c.on("toolchange", (t) => root.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === t))));
+    c.on("drawingcreate", (d) => { if (d.tool === "text") this.openTextEditor(d.id, true); });
+    c.canvas.addEventListener("dblclick", () => {
+      const d = c.selectedDrawing;
+      if (d?.tool === "text" && !d.locked && c.options.interaction.editDrawings) this.openTextEditor(d.id, false);
+    });
     c.on("drawingselect", (d) => {
       root.querySelector(".selbar")!.classList.toggle("show", !!d && c.options.ui.drawingBar);
       this.markSwatches(d?.color ?? null);
@@ -511,6 +617,44 @@ export class TradeChartElement extends HTMLElement {
       const o = c.options;
       if (o.ui.zoomLimitMessage) this.showToast(o.labels.zoomLimit.replace("{n}", String(minCandles)));
     });
+  }
+
+  private editor: HTMLInputElement | null = null;
+  /** A text box over a text drawing; Enter or leaving it saves, Esc cancels (and removes a new, empty one). */
+  private openTextEditor(id: string, isNew: boolean): void {
+    const c = this._chart;
+    const d = c?.drawings.find((x) => x.id === id);
+    if (!c || !d) return;
+    this.editor?.remove();
+    const input = document.createElement("input");
+    input.className = "texted";
+    input.setAttribute("part", "text-editor");
+    input.value = d.text ?? "";
+    input.placeholder = c.options.labels.textPlaceholder;
+    input.setAttribute("aria-label", c.options.labels.editText);
+    const at = c.toScreen(d.points[0]);
+    input.style.left = `${Math.max(4, Math.min(at.x - 4, this.wrap.clientWidth - 140))}px`;
+    input.style.top = `${Math.max(4, at.y - 16)}px`;
+    this.wrap.append(input);
+    this.editor = input;
+    let done = false;
+    const close = (save: boolean) => {
+      if (done) return;
+      done = true;
+      const text = input.value.trim();
+      input.remove();
+      if (this.editor === input) this.editor = null;
+      if (save && text) c.updateDrawing(id, { text });
+      else if (isNew && !text) c.removeDrawing(id);
+      c.canvas.focus({ preventScroll: true });
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") close(true);
+      else if (e.key === "Escape") close(false);
+    });
+    input.addEventListener("blur", () => close(true));
+    requestAnimationFrame(() => input.focus());
   }
 
   /** Lock button state and Delete availability for the selected drawing. */
@@ -547,6 +691,8 @@ export class TradeChartElement extends HTMLElement {
     label('.controls [data-a="image"]', L.screenshot);
     root.querySelector('.controls [data-a="image"]')!.classList.toggle("off", !ui.screenshotButton);
     root.querySelector('.controls [data-a="fullscreen"]')!.classList.toggle("off", !ui.fullscreenButton);
+    root.querySelector('.controls [data-a="rotate"]')!.classList.toggle("off", !ui.fullscreenButton || !ui.rotateButton);
+    label('.controls [data-a="rotate"]', L.rotate);
     root.querySelector(".controls .sep")!.classList.toggle("off", !ui.screenshotButton && !ui.fullscreenButton);
     label('.controls [data-a="fullscreen"]', this.isFullscreen ? L.exitFullscreen : L.fullscreen, "F");
     // the bar is shown when any of its buttons are

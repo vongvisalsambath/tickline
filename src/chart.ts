@@ -1,8 +1,8 @@
 // The chart engine: one canvas, a view (time per pixel + right edge), a render loop, and pointer/keyboard input.
 // Framework-free; <trade-chart> (element.ts) wraps it. Everything is drawn in CSS pixels on a HiDPI canvas.
 import type {
-  AlertEvent, AlertOptions, Candle, ChartType, CrosshairInfo, ImageOptions, MarkerOptions, PriceLineOptions, Theme, Tick, TimeLineOptions,
-  Timeframe, VisibleRange, ZoneOptions,
+  AlertEvent, AlertOptions, Candle, ChartPoint, ChartType, CrosshairInfo, ImageOptions, LayerContext, LayerOptions, LiveMarkerFn, MarkerOptions,
+  PriceLineOptions, ShapeOptions, Theme, Tick, TimeLineOptions, Timeframe, VisibleRange, ZoneOptions,
 } from "./types";
 import { CandleStore, heikinAshi } from "./data";
 import { autoPrecision, formatPrice, priceTicks, splitEmphasis, stepDecimals, niceStep } from "./price";
@@ -19,7 +19,10 @@ type Overlay =
   | { kind: "priceLine"; o: PriceLineOptions }
   | { kind: "timeLine"; o: TimeLineOptions }
   | { kind: "zone"; o: ZoneOptions }
-  | { kind: "alert"; o: AlertOptions };
+  | { kind: "alert"; o: AlertOptions }
+  | { kind: "shape"; o: ShapeOptions };
+
+type LayerFn = (ctx: CanvasRenderingContext2D, api: LayerContext) => void;
 
 /** A user's chart, to save and restore: chart type, indicators, drawings, alerts and the view. */
 export interface ChartState {
@@ -48,6 +51,8 @@ export interface ChartEvents {
   indicatorschange: IndicatorInfo[];
   /** Drawings were added, moved, restyled or deleted. Save `drawings` to restore them later. */
   drawingschange: Drawing[];
+  /** The user finished placing a new drawing. */
+  drawingcreate: Drawing;
   /** A drawing was selected (or the selection cleared). */
   drawingselect: Drawing | null;
   /** The active drawing tool changed (null when placing finished or was cancelled). */
@@ -142,6 +147,10 @@ export class Chart {
   set drawingColor(c: string) { this.opts.drawings.color = c; }
   private numberFormats = new Map<string, Intl.NumberFormat>();
   private loadingOn = false;
+  private layers: { draw: LayerFn; z: "below" | "above" | "top"; animate: boolean }[] = [];
+  private images = new Map<string, HTMLImageElement | null>();
+  /** Screen boxes of text drawings, for hit testing (filled while drawing). */
+  private textBoxes = new Map<string, { x: number; y: number; w: number; h: number }>();
   /** Crosshair time shown because another chart is synced to this one. */
   private syncTime: number | null = null;
   private dateFormats = new Map<string, Intl.DateTimeFormat>();
@@ -295,6 +304,48 @@ export class Chart {
   addPriceLine(o: PriceLineOptions): string { return this.addOverlay({ kind: "priceLine", o }); }
   addTimeLine(o: TimeLineOptions): string { return this.addOverlay({ kind: "timeLine", o }); }
   addZone(o: ZoneOptions): string { return this.addOverlay({ kind: "zone", o }); }
+  /**
+   * A shape drawn from code: line, arrow, circle, ellipse, rect, polygon, path, text or image.
+   * It's pinned to time and price, so it moves with the chart. Returns its id (change it with
+   * updateOverlay, remove it with removeOverlay).
+   */
+  addShape(o: ShapeOptions): string { return this.addOverlay({ kind: "shape", o: { ...o, points: o.points.map((q) => ({ ...q })) } }); }
+
+  /** All shapes added with addShape, with their ids. */
+  get shapes(): (ShapeOptions & { id: string })[] {
+    return [...this.overlays].filter(([, ov]) => ov.kind === "shape").map(([id, ov]) => ({ ...(ov.o as ShapeOptions), id }));
+  }
+
+  /**
+   * Draws anything on the chart, every frame, with the canvas context and helpers that turn
+   * times and prices into screen positions. Returns a function that removes the layer.
+   * @example chart.addLayer((ctx, { timeToX, priceToY }) => { ctx.fillRect(timeToX(t) - 2, priceToY(p) - 2, 4, 4); });
+   */
+  addLayer(draw: LayerFn, o: LayerOptions = {}): () => void {
+    const layer = { draw, z: o.zIndex ?? "above", animate: !!o.animate };
+    this.layers.push(layer);
+    this.markDirty();
+    return () => { this.layers = this.layers.filter((l) => l !== layer); this.markDirty(); };
+  }
+
+  private rotation: 0 | 90 = 0;
+  /**
+   * Tells the chart it's shown turned a quarter clockwise (90) or upright (0), so touches and clicks
+   * land in the right place. <trade-chart> does this itself for landscape full screen on phones.
+   */
+  setRotation(deg: 0 | 90): void {
+    if (deg === this.rotation) return;
+    this.rotation = deg;
+    this.w = 0; // force a resize
+    this.resize();
+  }
+  get screenRotation(): 0 | 90 { return this.rotation; }
+
+  /** Where a time and price are on screen (CSS px from the top-left of the chart). */
+  toScreen(p: ChartPoint): { x: number; y: number } { return { x: this.timeToX(p.time), y: this.priceToY(p.price) }; }
+  /** The time and price at a screen position in the price pane. */
+  fromScreen(p: { x: number; y: number }): ChartPoint { return { time: this.xToTime(p.x), price: this.yToPrice(p.y) }; }
+
   /** A price alert: a line that fires the "alert" event when the price crosses it. Returns its id. */
   addAlert(o: AlertOptions): string { return this.addOverlay({ kind: "alert", o }); }
   /** All alerts still waiting, with their ids. */
@@ -303,7 +354,7 @@ export class Chart {
   }
 
   /** Changes an overlay's options (merged). */
-  updateOverlay(id: string, patch: Partial<MarkerOptions & PriceLineOptions & TimeLineOptions & ZoneOptions & AlertOptions>): void {
+  updateOverlay(id: string, patch: Partial<MarkerOptions & PriceLineOptions & TimeLineOptions & ZoneOptions & AlertOptions> | Partial<ShapeOptions>): void {
     const ov = this.overlays.get(id);
     if (!ov) return;
     ov.o = { ...ov.o, ...patch } as never;
@@ -387,7 +438,7 @@ export class Chart {
   }
 
   /** Changes a drawing's colour, width, style, lock or visibility. */
-  updateDrawing(id: string, patch: Partial<Pick<Drawing, "color" | "width" | "style" | "locked" | "hidden">>): void {
+  updateDrawing(id: string, patch: Partial<Pick<Drawing, "color" | "width" | "style" | "locked" | "hidden" | "text" | "fontSize">>): void {
     const d = this.drawingList.find((x) => x.id === id);
     if (!d) return;
     Object.assign(d, patch);
@@ -727,7 +778,8 @@ export class Chart {
   }
 
   private resize(): void {
-    const r = this.container.getBoundingClientRect();
+    // when shown rotated, the on-screen box is turned; the layout size is the chart's own size
+    const r = this.rotation ? { width: this.container.offsetWidth, height: this.container.offsetHeight } : this.container.getBoundingClientRect();
     const w = Math.max(10, Math.round(r.width)), h = Math.max(10, Math.round(r.height));
     const dpr = Math.min(3, (typeof devicePixelRatio === "number" && devicePixelRatio) || 1);
     if (w === this.w && h === this.h && dpr === this.dpr) return;
@@ -752,7 +804,7 @@ export class Chart {
     const minGap = 1000 / Math.max(1, this.opts.fps);
     const live = this.isLive() && this.following;
     const gliding = Number.isFinite(this.displayPrice) && this.store.last && Math.abs(this.displayPrice - this.store.last.close) > 1e-12;
-    const animating = live || gliding || (this.animated && this.isLive());
+    const animating = live || gliding || (this.animated && this.isLive()) || (this.animated && this.layers.some((l) => l.animate));
     if (!force && !this.dirty && !animating) return;
     if (!force && now - this.lastFrame < minGap - 1) { this.kick(); return; }
     const dt = Math.min(250, now - (this.lastFrame || now));
@@ -901,10 +953,14 @@ export class Chart {
     ctx.clip();
     this.drawWatermark();
     this.drawZones();
+    this.drawShapes("below");
+    this.drawLayers("below", now);
     this.drawSeries();
     if (this.opts.series.highLowLabels) this.drawHighLow(dec);
     this.drawMainIndicators();
     this.drawOverlays();
+    this.drawShapes("above");
+    this.drawLayers("above", now);
     this.drawDrawings(dec);
     this.drawLivePoint(now);
     ctx.restore();
@@ -943,6 +999,7 @@ export class Chart {
     this.drawLiveTag(dec);
     this.drawCrosshair(dec);
     this.drawLegend(dec);
+    this.drawLayers("top", now);
     if (this.loadingOn) this.drawLoading();
   }
 
@@ -1023,6 +1080,120 @@ export class Chart {
         const top = Math.min(yO, yC), bh = Math.max(1, Math.abs(yC - yO));
         ctx.fillRect(Math.round(cx - bodyW / 2), Math.round(top), Math.round(bodyW), Math.max(1, Math.round(bh)));
       }
+    }
+  }
+
+  /** Shapes added with addShape, under or over the candles. */
+  private drawShapes(z: "below" | "above"): void {
+    const { ctx, theme: th } = this;
+    for (const ov of this.overlays.values()) {
+      if (ov.kind !== "shape" || (ov.o.zIndex ?? "above") !== z) continue;
+      const o = ov.o;
+      const pts = o.points.map((q) => this.toXY(q));
+      if (!pts.length) continue;
+      ctx.save();
+      ctx.globalAlpha = o.opacity ?? 1;
+      const color = o.color ?? th.accent;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = o.width ?? 1.5;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.setLineDash(dash(o.style ?? "solid"));
+      const finish = (closed: boolean) => {
+        if (o.fill && closed) { ctx.fillStyle = o.fill; ctx.fill(); }
+        if (o.width !== 0) ctx.stroke();
+      };
+      ctx.beginPath();
+      switch (o.type) {
+        case "line":
+        case "arrow":
+          if (pts.length < 2) break;
+          ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y);
+          ctx.stroke();
+          if (o.type === "arrow") { ctx.setLineDash([]); arrowHead(ctx, pts[0], pts[1], o.headSize ?? 9, color); }
+          break;
+        case "circle": {
+          const r = o.radius ?? (pts[1] ? Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) : 6);
+          ctx.arc(pts[0].x, pts[0].y, Math.max(0, r), 0, Math.PI * 2);
+          finish(true);
+          break;
+        }
+        case "ellipse":
+          if (pts.length < 2) break;
+          ctx.ellipse((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2, Math.abs(pts[1].x - pts[0].x) / 2, Math.abs(pts[1].y - pts[0].y) / 2, 0, 0, Math.PI * 2);
+          finish(true);
+          break;
+        case "rect":
+          if (pts.length < 2) break;
+          ctx.rect(Math.min(pts[0].x, pts[1].x), Math.min(pts[0].y, pts[1].y), Math.abs(pts[1].x - pts[0].x), Math.abs(pts[1].y - pts[0].y));
+          finish(true);
+          break;
+        case "polygon":
+        case "path":
+          pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+          if (o.type === "polygon" || o.closed) ctx.closePath();
+          finish(o.type === "polygon" || !!o.closed);
+          break;
+        case "image": {
+          const img = this.image(o.src);
+          const w = o.imageWidth ?? 24, h = o.imageHeight ?? 24;
+          const dx = o.align === "left" ? 0 : o.align === "right" ? -w : -w / 2;
+          const dy = o.baseline === "top" ? 0 : o.baseline === "bottom" ? -h : -h / 2;
+          if (img) ctx.drawImage(img, pts[0].x + dx, pts[0].y + dy, w, h);
+          break;
+        }
+        case "text": break;
+      }
+      // text: the text shape itself, or a label beside another shape
+      if (o.text) {
+        ctx.setLineDash([]);
+        const size = o.fontSize ?? this.opts.layout.fontSize + 1;
+        const font = `${o.fontWeight ?? (o.type === "text" ? 600 : 500)} ${size}px ${th.font}`;
+        const at = o.type === "text" || o.type === "image" ? pts[0] : o.type === "circle" ? { x: pts[0].x, y: pts[0].y } : pts[pts.length - 1];
+        const align = o.align ?? (o.type === "text" ? "center" : "left");
+        const baseline = o.baseline ?? (o.type === "text" || o.type === "circle" ? "middle" : "bottom");
+        const r = o.type === "circle" ? o.radius ?? (pts[1] ? Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) : 6) : 0;
+        const off = o.type === "text" ? { x: 0, y: 0 } : o.type === "image" ? { x: 0, y: (o.imageHeight ?? 24) / 2 + 4 } : o.type === "circle" ? { x: r + 6, y: 0 } : { x: 6, y: -4 };
+        drawText(ctx, o.text, at.x + off.x, at.y + off.y, { font, color: o.textColor ?? (o.background ? th.overlayText : color), background: o.background, align, baseline: o.type === "image" ? "top" : baseline });
+      }
+      ctx.restore();
+    }
+  }
+
+  /** Loads (once) and returns an image for image shapes; redraws when it arrives. */
+  private image(src?: string): HTMLImageElement | null {
+    if (!src || typeof Image === "undefined") return null;
+    if (this.images.has(src)) { const img = this.images.get(src)!; return img && img.complete && img.naturalWidth ? img : null; }
+    const img = new Image();
+    img.crossOrigin = "anonymous"; // keeps the canvas exportable as an image when the server allows it
+    img.onload = () => this.markDirty();
+    img.onerror = () => this.images.set(src, null);
+    img.src = src;
+    this.images.set(src, img);
+    return null;
+  }
+
+  private drawLayers(z: "below" | "above" | "top", now: number): void {
+    if (!this.layers.some((l) => l.z === z)) return;
+    const { ctx } = this;
+    const last = this.store.last;
+    const lineType = this.opts.type === "line" || this.opts.type === "area";
+    const live = last && Number.isFinite(this.displayPrice)
+      ? { time: last.time, price: this.displayPrice, x: lineType ? this.timeToX(this.liveTime()) : this.timeToX(last.time + this.tf.ms / 2), y: this.priceToY(this.displayPrice) }
+      : null;
+    const { list, from, to } = this.visibleCandles();
+    const api: LayerContext = {
+      timeToX: (t) => this.timeToX(t), xToTime: (x) => this.xToTime(x),
+      priceToY: (p) => this.priceToY(p), yToPrice: (y) => this.yToPrice(y),
+      width: this.plotW(), height: this.mainH(), now, theme: { ...this.theme }, live,
+      range: { from: this.xToTime(0), to: this.xToTime(this.plotW()) },
+      candles: list.slice(from, to),
+    };
+    for (const l of this.layers) {
+      if (l.z !== z) continue;
+      ctx.save();
+      try { l.draw(ctx, api); } catch (e) { console.error(e); }
+      ctx.restore();
     }
   }
 
@@ -1199,17 +1370,14 @@ export class Chart {
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
     }
-    // glow dot, pulsing while live
-    if (this.isLive() && lp.pulse) {
-      const pulse = this.animated ? (Math.sin(now / 420) + 1) / 2 : 0.5;
-      const r = 10 + pulse * 6;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, withAlpha(color, 0.55));
-      g.addColorStop(1, withAlpha(color, 0));
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    // the marker at the live price
+    if (this.isLive() && lp.marker !== "none") {
+      if (typeof lp.marker === "function") {
+        ctx.save();
+        try { (lp.marker as LiveMarkerFn)(ctx, { x, y, color, now, live: true, animated: this.animated }); }
+        catch (e) { console.error(e); }
+        ctx.restore();
+      } else drawMarker(ctx, lp.marker, x, y, color, this.animated ? now : NaN);
     }
     // time left in the candle
     if (this.isLive() && lp.countdown && this.tf.ms >= 2000) {
@@ -1578,12 +1746,14 @@ export class Chart {
     pl.points.push(this.toPoint(p));
     if (pl.points.length >= POINTS_NEEDED[pl.tool]) {
       const id = "dr" + this.nextId++;
-      this.drawingList.push({ id, tool: pl.tool, points: pl.points, color: this.drawingColor, width: this.opts.drawings.width, style: this.opts.drawings.style });
+      const d: Drawing = { id, tool: pl.tool, points: pl.points, color: this.drawingColor, width: this.opts.drawings.width, style: this.opts.drawings.style };
+      this.drawingList.push(d);
       this.tool = null;
       this.placing = null;
       this.emit("toolchange", null);
       this.drawingsChanged();
       this.select(id);
+      this.emit("drawingcreate", { ...d, points: d.points.map((q) => ({ ...q })) });
     }
     this.markDirty();
   }
@@ -1602,6 +1772,11 @@ export class Chart {
         if (h >= 0) return { id: d.id, handle: h };
       }
       if (d.hidden) continue;
+      if (d.tool === "text") {
+        const b = this.textBoxes.get(d.id);
+        if (b && p.x >= b.x - 4 && p.x <= b.x + b.w + 4 && p.y >= b.y - 4 && p.y <= b.y + b.h + 4) return { id: d.id, handle: -1 };
+        continue;
+      }
       if (distToDrawing(d.tool, pts, p, this.plotW(), this.mainH(), this.fibYs(d)) <= 6) return { id: d.id, handle: -1 };
     }
     return null;
@@ -1634,6 +1809,35 @@ export class Chart {
       ctx.beginPath();
       switch (d.tool) {
         case "line": ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y); break;
+        case "arrow":
+          ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          arrowHead(ctx, pts[0], pts[1], 7 + (d.width ?? 1.5) * 2, d.color);
+          ctx.beginPath();
+          break;
+        case "circle": {
+          const r = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+          ctx.fillStyle = withAlpha(d.color, 0.08);
+          ctx.arc(pts[0].x, pts[0].y, r, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case "text": {
+          const size = d.fontSize ?? this.opts.layout.fontSize + 3;
+          const text = d.text || this.opts.labels.textPlaceholder;
+          const box = drawText(ctx, text, pts[0].x, pts[0].y, { font: `600 ${size}px ${th.font}`, color: d.color, align: "left", baseline: "middle", faded: !d.text });
+          this.textBoxes.set(d.id, box);
+          if (d.id === this.selectedId) {
+            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = withAlpha(d.color, 0.7);
+            ctx.lineWidth = 1;
+            ctx.strokeRect(box.x - 3, box.y - 2, box.w + 6, box.h + 4);
+          }
+          ctx.beginPath();
+          break;
+        }
         case "trend": { const e = rayEnd(pts[0], pts[1], pw, mh); ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(e.x, e.y); break; }
         case "horizontal": ctx.moveTo(0, crisp(pts[0].y)); ctx.lineTo(pw, crisp(pts[0].y)); break;
         case "vertical": ctx.moveTo(crisp(pts[0].x), 0); ctx.lineTo(crisp(pts[0].x), mh); break;
@@ -1719,13 +1923,13 @@ export class Chart {
     for (const d of this.drawingList) {
       if (d.hidden) continue;
       const sel = d.id === this.selectedId;
-      if (d.tool === "horizontal" || sel) {
+      if (d.tool === "horizontal" || (sel && d.tool !== "text")) {
         for (const q of d.tool === "vertical" ? [] : d.points) {
           const y = this.priceToY(q.price);
           if (y > 0 && y < this.mainH() && this.opts.priceScale.visible) tag(this.fmtPrice(q.price, dec), this.plotW() + 4, y, d.color, "left");
         }
       }
-      if (sel && d.tool !== "horizontal") {
+      if (sel && d.tool !== "horizontal" && d.tool !== "text") {
         for (const q of d.points) {
           const x = this.timeToX(q.time);
           if (x > 0 && x < this.plotW() && this.opts.timeScale.visible) tag(this.fmtTime(q.time, "drawing"), x, this.plotH() + this.axisH() / 2, d.color, "center");
@@ -1738,6 +1942,8 @@ export class Chart {
 
   private local(e: PointerEvent | WheelEvent | MouseEvent): { x: number; y: number } {
     const r = this.canvas.getBoundingClientRect();
+    // shown turned a quarter clockwise: the chart's x runs down the screen and its y runs right to left
+    if (this.rotation === 90) return { x: e.clientY - r.top, y: r.right - e.clientX };
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
@@ -1868,7 +2074,10 @@ export class Chart {
       this.zoomAt(this.following ? this.timeToX(this.liveTime()) : p.x, factor);
     }, { passive: false });
 
-    on("dblclick", () => { if (this.opts.interaction.doubleClickToLive) this.goLive(); });
+    on("dblclick", (e) => {
+      if (this.opts.interaction.editDrawings && this.drawingAt(this.local(e))) return;
+      if (this.opts.interaction.doubleClickToLive) this.goLive();
+    });
 
     on("keydown", (e) => {
       if (!this.opts.interaction.keyboard) return;
@@ -1887,7 +2096,7 @@ export class Chart {
           else handled = false;
           break;
         case "Delete": case "Backspace":
-          if (this.selectedId && this.opts.interaction.editDrawings) this.removeDrawing(this.selectedId); else handled = false;
+          if (this.selectedId && this.opts.interaction.editDrawings && !this.selectedDrawing?.locked) this.removeDrawing(this.selectedId); else handled = false;
           break;
         default: handled = false;
       }
@@ -1906,6 +2115,105 @@ export class Chart {
 function crisp(v: number): number { return Math.round(v) + 0.5; }
 
 const ALERT_COLOR = "#f5a524";
+
+/** The built-in live-price markers. `now` is NaN when animation is off. */
+function drawMarker(ctx: CanvasRenderingContext2D, kind: string, x: number, y: number, color: string, now: number): void {
+  const still = !Number.isFinite(now);
+  const dot = (r = 3) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); };
+  const halo = (r: number, a: number) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, withAlpha(color, a));
+    g.addColorStop(1, withAlpha(color, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  };
+  switch (kind) {
+    case "ripple": {
+      // rings spreading out and fading, one after another
+      const period = 1800;
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 3; i++) {
+        const t = still ? i / 3 + 0.15 : ((now / period + i / 3) % 1);
+        ctx.strokeStyle = withAlpha(color, 0.6 * (1 - t));
+        ctx.beginPath(); ctx.arc(x, y, 4 + t * 22, 0, Math.PI * 2); ctx.stroke();
+      }
+      dot(3.5);
+      break;
+    }
+    case "radar": {
+      // a sweep turning around the point, with a ring
+      const r = 20;
+      const a = still ? -Math.PI / 2 : ((now / 1400) % 1) * Math.PI * 2;
+      for (let i = 0; i < 18; i++) {
+        const a0 = a - (i + 1) * 0.07, a1 = a - i * 0.07;
+        ctx.fillStyle = withAlpha(color, 0.32 * (1 - i / 18));
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, r, a0, a1); ctx.closePath(); ctx.fill();
+      }
+      ctx.strokeStyle = withAlpha(color, 0.35);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = withAlpha(color, 0.9);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); ctx.stroke();
+      dot(3);
+      break;
+    }
+    case "glow":
+      halo(18, 0.45);
+      halo(8, 0.6);
+      dot(3);
+      break;
+    case "dot":
+      dot(3.5);
+      break;
+    default: {
+      // pulse
+      const pulse = still ? 0.5 : (Math.sin(now / 420) + 1) / 2;
+      halo(10 + pulse * 6, 0.55);
+      dot(3);
+    }
+  }
+}
+
+/** An arrow head at `to`, pointing away from `from`. */
+function arrowHead(ctx: CanvasRenderingContext2D, from: { x: number; y: number }, to: { x: number; y: number }, size: number, color: string): void {
+  const a = Math.atan2(to.y - from.y, to.x - from.x);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(to.x, to.y);
+  ctx.lineTo(to.x - size * Math.cos(a - 0.45), to.y - size * Math.sin(a - 0.45));
+  ctx.lineTo(to.x - size * Math.cos(a + 0.45), to.y - size * Math.sin(a + 0.45));
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Text with an optional tag behind it. Returns the box it takes up. */
+function drawText(
+  ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
+  o: { font: string; color: string; background?: string; align: "left" | "center" | "right"; baseline: "top" | "middle" | "bottom"; faded?: boolean },
+): { x: number; y: number; w: number; h: number } {
+  ctx.font = o.font;
+  const lines = text.split("\n");
+  const size = parseFloat(/(\d+(?:\.\d+)?)px/.exec(o.font)?.[1] ?? "12");
+  const lh = Math.round(size * 1.3);
+  const w = Math.max(...lines.map((l) => ctx.measureText(l).width));
+  const h = lh * lines.length;
+  const pad = o.background ? 6 : 0;
+  const left = o.align === "center" ? x - w / 2 : o.align === "right" ? x - w : x;
+  const top = o.baseline === "top" ? y : o.baseline === "bottom" ? y - h : y - h / 2;
+  if (o.background) {
+    ctx.fillStyle = o.background;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === "function") ctx.roundRect(left - pad, top - pad / 2, w + pad * 2, h + pad, 5); else ctx.rect(left - pad, top - pad / 2, w + pad * 2, h + pad);
+    ctx.fill();
+  }
+  ctx.fillStyle = o.color;
+  ctx.globalAlpha *= o.faded ? 0.55 : 1;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  lines.forEach((l, i) => ctx.fillText(l, left, top + lh * i + lh / 2));
+  if (o.faded) ctx.globalAlpha /= 0.55;
+  return { x: left - pad, y: top - pad / 2, w: w + pad * 2, h: h + pad };
+}
 
 /** "45s", "12m", "3h 20m", "2d 4h". */
 function formatDuration(ms: number): string {

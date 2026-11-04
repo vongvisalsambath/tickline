@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tickline · A live trading chart for any website</title>
-  <meta name="description" content="Tickline is a live trading chart in one HTML tag: smooth real-time prices, candles, indicators, drawing tools and trade markers. Works with React, Vue, Angular, Blazor or plain HTML. 28 KB, no dependencies." />
+  <meta name="description" content="Tickline is a live trading chart in one HTML tag: smooth real-time prices, candles, indicators, drawing tools and trade markers. Works with React, Vue, Angular, Blazor or plain HTML. 32 KB, no dependencies." />
   <meta name="theme-color" content="#0b0f17" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="css/site.css" />
@@ -19,6 +19,7 @@
       <a href="#frameworks">Frameworks</a>
       <a href="#customise">Customise</a>
       <a href="#reference">Reference</a>
+      <a href="docs/index.html">Docs</a>
       <a class="gh" href="https://github.com/vongvisalsambath/tickline">GitHub</a>
     </nav>
     <button class="theme" type="button" data-theme-toggle aria-label="Switch to light theme">☀</button>
@@ -29,10 +30,10 @@
       <div class="wrap">
         <p class="eyebrow">Open-source chart for trading apps</p>
         <h1>A live trading chart for <span class="hl">any website.</span></h1>
-        <p class="lead">One <code>&lt;trade-chart&gt;</code> tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. Plain HTML, React, Vue, Angular or Blazor. Configure almost everything. 28 KB compressed, no dependencies.</p>
+        <p class="lead">One <code>&lt;trade-chart&gt;</code> tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. Plain HTML, React, Vue, Angular or Blazor. Configure almost everything. 32 KB compressed, no dependencies.</p>
         <div class="actions">
           <a class="btn" href="#start">Get started</a>
-          <a class="btn ghost" href="https://github.com/vongvisalsambath/tickline">View on GitHub</a>
+          <a class="btn ghost" href="docs/index.html">Read the docs</a>
           <code class="install" data-copy="npm i tickline">npm i tickline</code>
         </div>
       </div>
@@ -72,7 +73,7 @@
           <article><h3>Everything in the box</h3><p>Candles, bars, Heikin-Ashi, line and area; SMA, EMA, Bollinger Bands, RSI, MACD and volume; trend lines, rectangles, Fibonacci and a measure tool; price alerts. No plugins to write.</p></article>
           <article><h3>Show your users' positions</h3><p>Markers, entry lines, shaded zones and expiry lines with countdowns. Your app keeps its own trading logic.</p></article>
           <article><h3>Works with any stack</h3><p>A standard web component: plain HTML, React, Vue, Angular, Svelte or Blazor. Feed it from WebSocket, REST or SignalR.</p></article>
-          <article><h3>Any screen, any size</h3><p>Responsive from small phones to wall screens, with full screen on every device (iPhone included) and one-click image download. 28 KB compressed, no dependencies.</p></article>
+          <article><h3>Any screen, any size</h3><p>Responsive from small phones to wall screens, with full screen on every device (iPhone included) and one-click image download. 32 KB compressed, no dependencies.</p></article>
           <article><h3>Configure almost everything</h3><p>Sizes, fonts, axes, crosshair, legend, where the live price sits on screen, zoom limits, gestures, formats, every colour and every word, through one documented options object.</p></article>
         </div>
       </div>
@@ -243,6 +244,10 @@ window.tickline = {
               <option value="auto">Auto (scale fits)</option><option value="center">Centre of the chart</option>
               <option value="right">Right, middle height</option><option value="x">Centre across only</option>
             </select></label>
+            <label>Live marker <select name="marker">
+              <option value="pulse">Pulse</option><option value="ripple">Ripple</option><option value="radar">Radar</option>
+              <option value="glow">Glow</option><option value="dot">Dot</option><option value="none">None</option>
+            </select></label>
             <label>Live price line <select name="line"><option value="short">Short</option><option value="full">Full width</option><option value="none">None</option></select></label>
             <label>Candle width <input type="range" name="candleWidth" min="0.2" max="1" step="0.04" value="0.72" /></label>
             <label>Font size <input type="range" name="fontSize" min="9" max="15" step="1" value="11" /></label>
@@ -255,7 +260,6 @@ window.tickline = {
               <label><input type="checkbox" name="priceScale" checked /> Price axis</label>
               <label><input type="checkbox" name="timeScale" checked /> Time axis</label>
               <label><input type="checkbox" name="countdown" checked /> Countdown</label>
-              <label><input type="checkbox" name="pulse" checked /> Live pulse</label>
               <label><input type="checkbox" name="wicks" checked /> Wicks</label>
               <label><input type="checkbox" name="toolbar" checked /> Drawing tools</label>
               <label><input type="checkbox" name="zoomButtons" checked /> Zoom buttons</label>
@@ -284,6 +288,7 @@ window.tickline = {
     <section id="reference" aria-labelledby="ref-title">
       <div class="wrap">
         <h2 id="ref-title">Reference</h2>
+        <p class="lead">The most used parts. Everything else, with examples, is in the <a href="docs/index.html">documentation</a> and the <a href="docs/api.html">API reference</a>.</p>
         <div class="ref-grid">
           <div>
             <h3>Attributes</h3>

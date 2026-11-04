@@ -105,9 +105,11 @@ const ENUMS: Record<string, readonly unknown[]> = {
   "drawings.style": ["solid", "dashed", "dotted"],
   "lastPrice.line": ["short", "full", "none"],
   "lastPrice.countdownDirection": ["down", "up"],
+  "ui.fullscreenOrientation": ["auto", "landscape", "portrait"],
   priceLine: ["short", "full", "none"],
 };
-const TOOLS = ["line", "trend", "horizontal", "vertical", "rect", "fib", "measure"];
+const TOOLS = ["line", "trend", "arrow", "horizontal", "vertical", "rect", "circle", "fib", "measure", "text"];
+const MARKERS = ["pulse", "ripple", "radar", "glow", "dot", "none"];
 const SHORTHANDS: Record<string, string> = {
   animate: "boolean", countdown: "boolean", priceLine: "string", rightPadding: "number", minVisibleCandles: "number", emphasisDigits: "number",
 };
@@ -135,6 +137,11 @@ export function validateOptions(input: unknown): { valid: boolean; problems: Pro
   const check = (path: string, value: unknown, def: unknown) => {
     const allowed = ENUMS[path];
     if (allowed && !allowed.includes(value)) { problems.push({ path, message: `Must be one of ${allowed.map((a) => JSON.stringify(a)).join(", ")}.` }); return; }
+    if (path === "lastPrice.marker") {
+      if (typeof value === "function") return;
+      if (!MARKERS.includes(value as string)) problems.push({ path, message: `One of ${MARKERS.map((m) => JSON.stringify(m)).join(", ")}, or a function (from JavaScript).` });
+      return;
+    }
     if (path === "precision") { if (value !== "auto" && !(typeof value === "number" && value >= 0)) problems.push({ path, message: 'A number of decimals or "auto".' }); return; }
     if (path === "timezone") { if (value !== "local" && typeof value !== "number") problems.push({ path, message: '"local" or minutes from UTC, e.g. 420.' }); return; }
     if (path === "timeframe") { try { parseTimeframe(String(value)); } catch (e) { problems.push({ path, message: (e as Error).message }); } return; }

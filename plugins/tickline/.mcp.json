@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tickline": {
+      "command": "npx",
+      "args": ["-y", "tickline-mcp"]
+    }
+  }
+}

@@ -146,7 +146,8 @@ The colours are the theme's `crosshair`, `pillBackground` and `pillText`.
 | `lastPrice.line` | `"short"` | Dotted line at the live price: from the last candle to the axis (`"short"`), across the chart (`"full"`) or `"none"` |
 | `lastPrice.tag` | `true` | The price tag on the axis |
 | `lastPrice.emphasisDigits` | `3` | Trailing digits of the tag drawn larger, so small moves stand out. `0` turns it off |
-| `lastPrice.pulse` | `true` | The glowing dot at the live price |
+| `lastPrice.marker` | `"pulse"` | The marker at the live price: `"pulse"`, `"ripple"`, `"radar"`, `"glow"`, `"dot"`, `"none"`, or your own function (see [the live-price marker](drawing.md#the-live-price-marker)) |
+| `lastPrice.pulse` | `true` | Shorthand: `false` is the same as `marker: "none"` |
 | `lastPrice.countdown` | `true` | Time left in the current candle, next to the live price (timeframes of 2 seconds or more) |
 | `lastPrice.countdownDirection` | `"down"` | Count down to the candle's close (`"down"`) or up from its open (`"up"`) |
 
@@ -281,7 +282,9 @@ Every piece of text the chart shows, for translation. `{n}` in `zoomLimit` becom
 | `labels.loading` | `"Loading…"` |
 | `labels.lock`, `unlock`, `duplicate`, `hide` | `"Lock"`, `"Unlock"`, `"Duplicate"`, `"Hide"` |
 | `labels.alert` | `"Alert"` (default text by price alerts) |
-| `labels.tools.line` … `tools.measure` | `"Line"`, `"Trend line"`, `"Horizontal line"`, `"Vertical line"`, `"Rectangle"`, `"Fibonacci retracement"`, `"Measure"` |
+| `labels.textPlaceholder`, `editText` | `"Text"`, `"Edit text"` (text drawings) |
+| `labels.rotate` | `"Rotate"` |
+| `labels.tools.line` … `tools.text` | `"Line"`, `"Trend line"`, `"Arrow"`, `"Horizontal line"`, `"Vertical line"`, `"Rectangle"`, `"Circle"`, `"Fibonacci retracement"`, `"Measure"`, `"Text"` |
 
 ```js
 chart.setOptions({
@@ -306,15 +309,17 @@ The HTML controls of `<trade-chart>`. The `Chart` class has no built-in buttons 
 | `ui.zoomButtons` | `true` | The − ⌖ + buttons that appear on hover |
 | `ui.liveButton` | `true` | The "Live ▸" button that appears after scrolling back |
 | `ui.drawingToolbar` | `true` | The drawing toolbar |
-| `ui.drawingTools` | all seven | Which tools it offers, in order: `["line", "trend", "horizontal", "vertical", "rect", "fib", "measure"]` |
+| `ui.drawingTools` | all ten | Which tools it offers, in order: `["line", "trend", "arrow", "horizontal", "vertical", "rect", "circle", "fib", "measure", "text"]` |
 | `ui.drawingBar` | `true` | Colours and Delete for the selected drawing |
 | `ui.zoomLimitMessage` | `true` | The message at the closest zoom |
 | `ui.screenshotButton` | `true` | A button that downloads the chart as a PNG image |
 | `ui.fullscreenButton` | `true` | A button (and the F key) that shows the chart full screen |
+| `ui.fullscreenOrientation` | `"auto"` | Orientation in full screen: `"auto"` follows the device; `"landscape"` or `"portrait"` locks it where the browser allows (Android) and otherwise turns the chart (iPhone). See [Full screen](full-screen-and-images.md#portrait-and-landscape) |
+| `ui.rotateButton` | `true` | In full screen on touch screens, a button that switches between landscape and portrait |
 
 On touch screens the zoom, image and full-screen buttons appear when the user taps the chart. On small charts (narrower than 520 px or shorter than 420 px) the drawing tools fold into one pencil button.
 
-Each control has a `part` name for styling from outside: `chart`, `controls`, `live-button`, `drawing-tools`, `drawing-bar` and `toast`.
+Each control has a `part` name for styling from outside: `chart`, `controls`, `live-button`, `drawing-tools`, `drawing-bar`, `text-editor` and `toast`.
 
 ```css
 trade-chart::part(drawing-tools) { top: 12px; }
@@ -400,6 +405,8 @@ Attributes set the most common settings without any JavaScript.
 | `drawing-tools` | `ui.drawingTools` | `false` hides the toolbar, or a list such as `trend, horizontal, fib` |
 | `live-position` | `livePosition` | `center`, `0.8 0.5` (x then y), `0.5` (x only) |
 | `watermark` | `watermark.text` | Any text; `{symbol}` and `{timeframe}` are replaced |
+| `live-marker` | `lastPrice.marker` | `pulse`, `ripple`, `radar`, `glow`, `dot`, `none` |
+| `fullscreen-orientation` | `ui.fullscreenOrientation` | `auto`, `landscape`, `portrait` |
 | `options` | everything | JSON with any settings |
 
 ## Recipes

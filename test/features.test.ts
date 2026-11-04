@@ -167,3 +167,110 @@ describe("<trade-chart> extras", () => {
     expect(root.querySelector(".controls")!.classList.contains("off")).toBe(true);
   });
 });
+
+describe("shapes, layers and markers", () => {
+  const live = (n: number) => {
+    const end = Math.floor(Date.now() / MIN) * MIN;
+    return Array.from({ length: n }, (_, i) => ({ time: end - (n - 1 - i) * MIN, open: 100, high: 101, low: 99, close: 100, volume: 1 }));
+  };
+  const frame = (c: Chart) => (c as unknown as { frame: (t: number, f: boolean) => void }).frame(performance.now(), true);
+
+  it("adds, changes and removes shapes", () => {
+    const c = make();
+    c.setData(candles(50));
+    const id = c.addShape({ type: "circle", points: [{ time: T + 10 * MIN, price: 100 }], radius: 12, fill: "rgba(0,0,0,.2)" });
+    c.addShape({ type: "text", points: [{ time: T, price: 101 }], text: "Breakout", background: "#000" });
+    expect(c.shapes.map((x) => x.type)).toEqual(["circle", "text"]);
+    c.updateOverlay(id, { radius: 20 });
+    expect(c.shapes[0].radius).toBe(20);
+    frame(c); // draws without errors
+    c.removeOverlay(id);
+    expect(c.shapes).toHaveLength(1);
+    c.destroy();
+  });
+
+  it("calls layers with screen helpers, and removes them", () => {
+    const c = make();
+    c.setData(candles(50));
+    const seen: { w: number; x: number; n: number }[] = [];
+    const remove = c.addLayer((_ctx, api) => seen.push({ w: api.width, x: api.timeToX(T + 49 * MIN), n: api.candles.length }));
+    frame(c);
+    expect(seen.length).toBe(1);
+    expect(seen[0].w).toBeGreaterThan(0);
+    expect(seen[0].n).toBeGreaterThan(0);
+    remove();
+    frame(c);
+    expect(seen.length).toBe(1);
+    c.destroy();
+  });
+
+  it("uses a custom live marker, and pulse: false turns the marker off", () => {
+    const c = make();
+    c.setData(live(30));
+    const calls: boolean[] = [];
+    c.setOptions({ lastPrice: { marker: (_ctx, info) => calls.push(info.live) } });
+    frame(c);
+    expect(calls).toEqual([true]);
+    c.setOptions({ lastPrice: { pulse: false } });
+    expect(c.options.lastPrice.marker).toBe("none");
+    c.setOptions({ lastPrice: { marker: "radar" } });
+    expect(c.options.lastPrice.pulse).toBe(true);
+    for (const m of ["pulse", "ripple", "radar", "glow", "dot"] as const) { c.setOptions({ lastPrice: { marker: m } }); frame(c); }
+    c.destroy();
+  });
+
+  it("turns screen positions into time and price and back", () => {
+    const c = make();
+    c.setData(candles(50));
+    frame(c);
+    const p = { time: T + 20 * MIN, price: 100.5 };
+    const back = c.fromScreen(c.toScreen(p));
+    expect(Math.abs(back.time - p.time)).toBeLessThan(1000);
+    expect(back.price).toBeCloseTo(100.5, 6);
+    c.destroy();
+  });
+
+  it("a placed text drawing fires drawingcreate", () => {
+    const c = make();
+    c.setData(candles(50));
+    frame(c);
+    const made: string[] = [];
+    c.on("drawingcreate", (d) => made.push(d.tool));
+    c.setDrawingTool("text");
+    (c as unknown as { placePoint: (p: { x: number; y: number }) => void }).placePoint({ x: 200, y: 150 });
+    expect(made).toEqual(["text"]);
+    c.updateDrawing(c.drawings[0].id, { text: "Support" });
+    expect(c.drawings[0].text).toBe("Support");
+    c.destroy();
+  });
+
+  it("maps touches correctly when shown rotated", () => {
+    const c = make();
+    Object.defineProperty(c.canvas, "getBoundingClientRect", { value: () => ({ left: 0, top: 0, right: 400, bottom: 800, width: 400, height: 800 }) });
+    const local = (e: { clientX: number; clientY: number }) => (c as unknown as { local: (e: unknown) => { x: number; y: number } }).local(e);
+    expect(local({ clientX: 10, clientY: 20 })).toEqual({ x: 10, y: 20 });
+    c.setRotation(90);
+    // a touch near the top right of the screen is near the top left of the turned chart
+    expect(local({ clientX: 390, clientY: 20 })).toEqual({ x: 20, y: 10 });
+    c.destroy();
+  });
+});
+
+describe("<trade-chart> full screen orientation", () => {
+  it("turns the chart for landscape on a portrait screen that can't lock, and back", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 844, configurable: true });
+    document.body.innerHTML = '<trade-chart fullscreen-orientation="landscape" live-marker="ripple"></trade-chart>';
+    const el = document.body.firstElementChild as TradeChartElement;
+    expect(el.options.ui.fullscreenOrientation).toBe("landscape");
+    expect(el.options.lastPrice.marker).toBe("ripple");
+    await el.enterFullscreen();
+    expect(el.hasAttribute("rotated")).toBe(true);
+    expect(el.chart!.screenRotation).toBe(90);
+    await el.rotate(); // to portrait: no turning needed on a portrait screen
+    expect(el.hasAttribute("rotated")).toBe(false);
+    await el.exitFullscreen();
+    expect(el.hasAttribute("rotated")).toBe(false);
+    expect(el.chart!.screenRotation).toBe(0);
+  });
+});

@@ -25,7 +25,7 @@ describe("MCP knowledge", () => {
 
   it("validates settings", () => {
     expect(validateOptions({ grid: { vertical: false }, crosshair: { mode: "free" }, livePosition: { x: 0.5, y: null } }).valid).toBe(true);
-    const bad = validateOptions({ grdi: {}, crosshair: { mode: "sticky" }, series: { candleWidth: "wide" }, ui: { drawingTools: ["line", "circle"] }, format: { price: "x" } });
+    const bad = validateOptions({ grdi: {}, crosshair: { mode: "sticky" }, series: { candleWidth: "wide" }, ui: { drawingTools: ["line", "hexagon"] }, format: { price: "x" } });
     expect(bad.valid).toBe(false);
     expect(bad.problems.map((p) => p.path).sort()).toEqual(["crosshair.mode", "format.price", "grdi", "series.candleWidth", "ui.drawingTools"]);
     const clamped = validateOptions({ series: { candleWidth: 3 } });

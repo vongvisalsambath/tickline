@@ -78,13 +78,14 @@ The **first release** of each package is published by hand from your computer, b
 
 ## Every release after that
 
-13. **Bump the version** in both packages (they're released together, with the same version):
+13. **Bump the version** in both packages and the Claude Code plugin (they're released together, with the same version; a test checks they match):
     ```sh
     npm version patch --no-git-tag-version              # 0.1.0 → 0.1.1 (or minor / major)
     (cd mcp && npm version patch --no-git-tag-version)
     ```
+    and set the same `version` in `plugins/tickline/.claude-plugin/plugin.json` (Claude Code users get the update when it changes). Add the changes to `CHANGELOG.md`.
     Use **patch** for fixes, **minor** for new features, **major** for changes that break existing code.
-14. **Update the CDN version** in `README.md`, `site/index.html` and `examples/plain.html` (search for `tickline@`).
+14. **Update the CDN version** wherever it appears: search the repository for `tickline@0.` (README, site, examples, docs, the skill).
 15. **Commit, tag and push:**
     ```sh
     git commit -am "Release 0.1.1"

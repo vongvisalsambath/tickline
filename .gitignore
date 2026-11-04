@@ -4,3 +4,4 @@ coverage/
 *.log
 site/lib/
 mcp/dist/
+site/docs/

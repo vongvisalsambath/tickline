@@ -2,14 +2,15 @@
 
 A live trading chart for any website. One `<trade-chart>` tag gives you smooth real-time prices, candles, indicators, drawing tools and markers for your users' positions. It works in plain HTML, React, Vue, Angular, Blazor, or anything else that renders HTML.
 
-**[Live demo and docs](https://tickline-chart.vercel.app)** · about 28 KB gzipped · no dependencies · MIT
+**[Live demo](https://tickline-chart.vercel.app)** · **[Documentation](https://tickline-chart.vercel.app/docs/)** · **[API reference](docs/api.md)** · about 32 KB gzipped · no dependencies · MIT
 
 - **Feels live.** The price eases between trades, the scale glides, and a countdown shows the time left in the candle.
 - **Six chart types.** Candles, hollow candles, bars, Heikin-Ashi, line and area. Timeframes from 5 seconds to 1 month.
 - **Indicators.** SMA, EMA, Bollinger Bands, RSI, MACD and volume, in resizable panes. Register your own.
-- **Drawing tools.** Line, trend line, horizontal, vertical, rectangle, Fibonacci retracement and a measure tool (change, %, candles, time). Users can select, drag, recolour, lock, duplicate and delete them, and you can save and restore them as JSON.
+- **Drawing tools.** Line, trend line, arrow, horizontal, vertical, rectangle, circle, Fibonacci retracement, a measure tool (change, %, candles, time) and text notes. Users can select, drag, recolour, lock, duplicate and delete them, and you can save and restore them as JSON.
+- **Draw anything from code.** Lines, arrows, circles, ellipses, boxes, polygons, paths, text and images pinned to time and price, plus custom canvas layers. The live price marker can pulse, ripple, sweep like radar, glow, or be your own.
 - **Positions and alerts.** Markers, price lines, time lines with countdowns, and shaded zones show trades, orders and expiries. Price alerts fire an event when the price crosses them.
-- **Images and full screen.** Download the chart as a PNG (or get a Blob to upload), and show it full screen on any device, including iPhone.
+- **Images and full screen.** Download the chart as a PNG (or get a Blob to upload), and show it full screen on any device, in portrait or landscape, including iPhone.
 - **Live price where you want it.** Keep the live price in the centre of the screen, or at any position you choose.
 - **Configure almost everything.** Sizes, fonts, grid, axes, crosshair, legend, zoom limits, gestures, animation, number and date formats, every colour and every word, through [one documented options object](docs/configuration.md).
 - **Made for real use.** Responsive from small phones to large screens, touch and keyboard, HiDPI, light and dark themes. It pauses when hidden, caps the frame rate, loads older history on demand, keeps several charts in sync, and saves and restores a user's whole chart.
@@ -293,6 +294,14 @@ claude mcp add tickline -- npx -y tickline-mcp
 
 Setup for other apps and the list of tools: [mcp/README.md](mcp/README.md).
 
+In Claude Code, the **Tickline plugin** adds a skill that teaches Claude the API and its pitfalls, together with the MCP server:
+
+```
+/plugin install tickline --marketplace vongvisalsambath/tickline
+```
+
+More in [AI assistants](docs/ai.md).
+
 ## Develop
 
 ```sh
@@ -302,6 +311,7 @@ npm run typecheck
 npm run build     # dist/
 npm run site      # build, then copy the library into site/ for the demo page
 npm run build:mcp # mcp/dist/tickline-mcp.js
+npm run docs      # site/docs/ from docs/*.md
 ```
 
 Open `demo/dev.html` or `site/index.html` through any static server (for example `npx serve .`).

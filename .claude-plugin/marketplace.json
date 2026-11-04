@@ -1,0 +1,12 @@
+{
+  "name": "tickline",
+  "description": "Tickline: a live trading chart for any website",
+  "owner": { "name": "Vong Visalsambath" },
+  "plugins": [
+    {
+      "name": "tickline",
+      "source": "./plugins/tickline",
+      "description": "Skill and MCP server for adding and configuring Tickline live trading charts"
+    }
+  ]
+}
